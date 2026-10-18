@@ -1,0 +1,26 @@
+services:
+  mongo:
+    image: mongo:7
+    profiles: ["local-db"]
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:27017:27017"
+    command: ["mongod", "--replSet", "rs0", "--bind_ip_all"]
+    volumes:
+      - orchestra_mongodata:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+  mongo-init:
+    image: mongo:7
+    profiles: ["local-db"]
+    depends_on:
+      mongo:
+        condition: service_healthy
+    restart: "no"
+    entrypoint: ["mongosh", "mongodb://mongo:27017/admin", "--quiet", "--eval"]
+    command: ["try { rs.status() } catch (error) { rs.initiate({_id: 'rs0', members: [{_id: 0, host: 'localhost:27017'}]}) }"]
+volumes:
+  orchestra_mongodata:

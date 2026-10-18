@@ -1,0 +1,31 @@
+services:
+  - type: web
+    name: orchestra-platform-api
+    runtime: node
+    plan: starter
+    buildCommand: npm ci && npm run prisma:generate -w apps/api && npm run build -w apps/api
+    startCommand: npm run start -w apps/api
+    healthCheckPath: /health
+    disk:
+      name: orchestra-private-documents
+      mountPath: /opt/render/project/src/.private-documents
+      sizeGB: 1
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: COOKIE_SECURE
+        value: "true"
+      - key: TRUST_PROXY_HOPS
+        value: "1"
+      - key: SESSION_MAX_AGE_HOURS
+        value: "12"
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: DATABASE_URL
+        sync: false
+      - key: WEB_ORIGIN
+        sync: false
+      - key: BOOTSTRAP_ADMIN_EMAIL
+        sync: false
+      - key: BOOTSTRAP_ADMIN_PASSWORD
+        sync: false

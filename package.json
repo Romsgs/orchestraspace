@@ -1,0 +1,12 @@
+{
+  "name": "orchestra-platform",
+  "private": true,
+  "version": "0.2.0",
+  "engines": { "node": ">=22 <23" },
+  "workspaces": ["apps/api", "apps/web"],
+  "scripts": {
+    "dev:api": "npm run dev -w apps/api",
+    "dev:web": "npm run dev -w apps/web",
+    "build": "npm run build -w apps/api && npm run build -w apps/web"
+  }
+}

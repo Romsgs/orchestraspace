@@ -1,0 +1,22 @@
+{
+  "en": {
+    "welcome_message": "Welcome to our site!",
+    "header_title": "Application Title",
+    "navigation_home": "Home",
+    "language_label": "Language",
+    "language_options": {
+      "en": "English",
+      "pt": "Português"
+    }
+  },
+  "pt": {
+    "welcome_message": "Bem-vindo ao nosso site!",
+    "header_title": "Título da Aplicação",
+    "navigation_home": "Início",
+    "language_label": "Idioma",
+    "language_options": {
+      "en": "English",
+      "pt": "Português"
+    }
+  }
+}
