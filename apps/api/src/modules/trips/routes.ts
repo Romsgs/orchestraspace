@@ -56,6 +56,22 @@ tripsRouter.post("/:organizationId/trips", requireAuth, orgRoles("ORG_ADMIN", "E
   res.status(201).json({ trip });
 }));
 
+tripsRouter.patch("/:organizationId/trips/:tripId", requireAuth, orgRoles("ORG_ADMIN", "EVENT_MANAGER"), asyncHandler(async (req, res) => {
+  const { organizationId, tripId } = z.object({
+    organizationId: z.string().min(1), tripId: z.string().min(1)
+  }).parse(req.params);
+  const { status } = z.object({
+    status: z.enum(["PLANNING", "CONFIRMED", "IN_PROGRESS", "COMPLETED", "CANCELLED"])
+  }).parse(req.body);
+  const trip = await prisma.trip.findFirst({ where: { id: tripId, organizationId }, select: { id: true } });
+  if (!trip) {
+    res.status(404).json({ error: "TRIP_NOT_FOUND", message: "A viagem não existe nesta orquestra." });
+    return;
+  }
+  const updated = await prisma.trip.update({ where: { id: tripId }, data: { status } });
+  res.json({ trip: updated });
+}));
+
 tripsRouter.post("/:organizationId/trips/:tripId/events", requireAuth, orgRoles("ORG_ADMIN", "EVENT_MANAGER"), asyncHandler(async (req, res) => {
   const { organizationId, tripId } = z.object({
     organizationId: z.string().min(1), tripId: z.string().min(1)

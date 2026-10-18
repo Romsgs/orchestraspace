@@ -34,9 +34,15 @@ export const api = {
   events: (orgId: string) => request<{ events: Event[] }>(`/api/organizations/${orgId}/events`),
   createEvent: (orgId: string, body: Record<string, unknown>) =>
     request<{ event: Event }>(`/api/organizations/${orgId}/events`, { method: "POST", body: JSON.stringify(body) }),
+  updateEvent: (orgId: string, eventId: string, body: Record<string, unknown>) =>
+    request<{ event: Event }>(`/api/organizations/${orgId}/events/${eventId}`, { method: "PATCH", body: JSON.stringify(body) }),
+  deleteEvent: (orgId: string, eventId: string) =>
+    request<void>(`/api/organizations/${orgId}/events/${eventId}`, { method: "DELETE" }),
   trips: (orgId: string) => request<{ trips: Trip[] }>(`/api/organizations/${orgId}/trips`),
   createTrip: (orgId: string, body: Record<string, unknown>) =>
     request<{ trip: Trip }>(`/api/organizations/${orgId}/trips`, { method: "POST", body: JSON.stringify(body) }),
+  updateTripStatus: (orgId: string, tripId: string, status: string) =>
+    request<{ trip: Trip }>(`/api/organizations/${orgId}/trips/${tripId}`, { method: "PATCH", body: JSON.stringify({ status }) }),
   attachEvent: (orgId: string, tripId: string, eventId: string) =>
     request(`/api/organizations/${orgId}/trips/${tripId}/events`, {
       method: "POST", body: JSON.stringify({ eventId, sortOrder: 0 })
@@ -66,7 +72,7 @@ export type User = {
 };
 export type Organization = { id: string; name: string; slug: string; timezone: string; status?: string; roles?: string[] };
 export type Event = {
-  id: string; type: string; status: string; title: string; startAt: string; endAt: string;
+  id: string; type: string; status: string; title: string; startAt: string; endAt: string; timezone?: string;
   venue?: string | null; conductor?: string | null; program?: string | null;
 };
 export type Trip = { id: string; title: string; startAt: string; endAt: string; status: string; eventLinks?: Array<{ event: Event }> };

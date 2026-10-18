@@ -1,5 +1,5 @@
 import { cloneElement, FormEvent, isValidElement, ReactNode, useEffect, useMemo, useState } from "react";
-import { CalendarDays, ChevronDown, Crown, FileText, LogOut, MapPinned, Music2, Plus, RefreshCw, ShieldCheck, Users, X } from "lucide-react";
+import { CalendarDays, ChevronDown, Crown, FileText, LogOut, MapPinned, Music2, Pencil, Plus, RefreshCw, ShieldCheck, Trash2, Users, X } from "lucide-react";
 import { api, Document as OrgDocument, Event, Invitation, Membership, Organization, Trip, User } from "./api";
 import languages from "./languages.json";
 
@@ -11,6 +11,35 @@ function dateLabel(value: string, timezone = "Europe/Sofia", locale = "pt-BR") {
   return new Intl.DateTimeFormat(locale, {
     dateStyle: "medium", timeStyle: "short", timeZone: timezone
   }).format(new Date(value));
+}
+
+function dateTimeInputValue(value: string, timezone: string) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", hourCycle: "h23"
+  }).formatToParts(new Date(value));
+  const fields = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${fields.year}-${fields.month}-${fields.day}T${fields.hour}:${fields.minute}`;
+}
+
+function dateTimeInputToIso(value: string, timezone: string) {
+  const [date, time] = value.split("T");
+  const [year, month, day] = date.split("-").map(Number);
+  const [hour, minute] = time.split(":").map(Number);
+  const desired = Date.UTC(year, month - 1, day, hour, minute);
+  let candidate = desired;
+  for (let i = 0; i < 4; i += 1) {
+    const parts = new Intl.DateTimeFormat("en-CA", {
+      timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit",
+      hour: "2-digit", minute: "2-digit", hourCycle: "h23"
+    }).formatToParts(new Date(candidate));
+    const fields = Object.fromEntries(parts.map((part) => [part.type, Number(part.value)]));
+    const represented = Date.UTC(fields.year, fields.month - 1, fields.day, fields.hour, fields.minute);
+    const adjustment = desired - represented;
+    candidate += adjustment;
+    if (!adjustment) break;
+  }
+  return new Date(candidate).toISOString();
 }
 
 export function App() {
@@ -64,6 +93,7 @@ export function App() {
   const [showOrgForm, setShowOrgForm] = useState(false);
   const [showEventForm, setShowEventForm] = useState(false);
   const [showTripForm, setShowTripForm] = useState(false);
+  const [editingEventId, setEditingEventId] = useState("");
   const [members, setMembers] = useState<Membership[]>([]);
   const [invitations, setInvitations] = useState<Invitation[]>([]);
   const [documents, setDocuments] = useState<OrgDocument[]>([]);
@@ -126,7 +156,31 @@ export function App() {
   const hasRole = (role: string) => Boolean(user?.isSuperAdmin || user?.memberships?.some((m) => m.organization.id === orgId && m.roles.some((r) => r.role.key === role)) || organizations.find((o) => o.id === orgId)?.roles?.includes(role));
   const canAdmin = hasRole("ORG_ADMIN");
   const canLibrary = canAdmin || hasRole("LIBRARIAN");
-  const upcoming = useMemo(() => [...events].sort((a,b) => +new Date(a.startAt) - +new Date(b.startAt)), [events]);
+  const agendaItems = useMemo(() => {
+    const linkedEventIds = new Set(trips.flatMap((trip) => trip.eventLinks?.map((link) => link.event.id) ?? []));
+    return [
+      ...trips.map((trip) => ({ kind: "trip" as const, id: trip.id, startAt: trip.startAt, trip })),
+      ...events.filter((event) => !linkedEventIds.has(event.id)).map((event) => ({ kind: "event" as const, id: event.id, startAt: event.startAt, event }))
+    ].sort((a, b) => +new Date(a.startAt) - +new Date(b.startAt));
+  }, [events, trips]);
+  const renderAgendaEvent = (event: Event) => {
+    const timezone = event.timezone ?? selectedOrg?.timezone ?? "Europe/Sofia";
+    if (editingEventId === event.id) return <form className="event-edit-form" key={event.id} onSubmit={(e) => void saveEventEdits(e, event)}>
+      <label>{t("Título")}<input name="title" defaultValue={event.title} required minLength={2}/></label>
+      <label>{t("Status")}<select name="status" defaultValue={event.status}><option value="DRAFT">{t("DRAFT")}</option><option value="PUBLISHED">{t("PUBLISHED")}</option><option value="CANCELLED">{t("CANCELLED")}</option><option value="COMPLETED">{t("COMPLETED")}</option></select></label>
+      <label>{t("Início")}<input name="startAt" type="datetime-local" defaultValue={dateTimeInputValue(event.startAt, timezone)} required/></label>
+      <label>{t("Término")}<input name="endAt" type="datetime-local" defaultValue={dateTimeInputValue(event.endAt, timezone)} required/></label>
+      <label>{t("Local")}<input name="venue" defaultValue={event.venue ?? ""}/></label>
+      <label>{t("Regente")}<input name="conductor" defaultValue={event.conductor ?? ""}/></label>
+      <label className="wide">{t("Programa")}<textarea name="program" rows={3} defaultValue={event.program ?? ""}/></label>
+      <div className="form-actions wide"><button type="button" className="secondary" onClick={() => setEditingEventId("")}>{t("Cancelar")}</button><button className="primary">{t("Salvar alterações")}</button></div>
+    </form>;
+    return <article className="event-row" key={event.id}>
+      <div className="date-tile"><strong>{new Date(event.startAt).toLocaleDateString(languages[language].locale,{day:"2-digit",timeZone:timezone})}</strong><small>{new Date(event.startAt).toLocaleDateString(languages[language].locale,{month:"short",timeZone:timezone}).replace(".","")}</small></div>
+      <div className="event-info"><div className="event-title"><h4>{event.title}</h4><span className={`pill ${event.status==="PUBLISHED"?"green":"neutral"}`}>{t(event.status)}</span></div><p>{t(event.type)} · {localizedDate(event.startAt, timezone)} – {localizedTime(event.endAt, timezone)}</p><div className="event-meta">{event.venue && <span>⌖ {event.venue}</span>}{event.conductor && <span>♩ {t("Regente")}: {event.conductor}</span>}</div>{event.program && <p className="program">{event.program}</p>}</div>
+      {canManage&&<div className="event-actions"><button className="secondary" aria-label={t("Editar evento")} title={t("Editar evento")} onClick={()=>setEditingEventId(event.id)}><Pencil size={15}/></button><button className="secondary danger-button" aria-label={t("Excluir evento")} title={t("Excluir evento")} onClick={()=>void deleteEvent(event)}><Trash2 size={15}/></button></div>}
+    </article>;
+  };
 
   async function submitLogin(e: FormEvent) {
     e.preventDefault(); setError(""); setBusy(true);
@@ -182,6 +236,32 @@ export function App() {
     } catch (err) { setError(err instanceof Error ? err.message : "Falha ao criar evento."); }
   }
 
+  async function saveEventEdits(e: FormEvent<HTMLFormElement>, event: Event) {
+    e.preventDefault(); setError("");
+    const data = new FormData(e.currentTarget);
+    const timezone = event.timezone ?? selectedOrg?.timezone ?? "Europe/Sofia";
+    try {
+      await api.updateEvent(orgId, event.id, {
+        title: String(data.get("title")), status: String(data.get("status")),
+        startAt: dateTimeInputToIso(String(data.get("startAt")), timezone),
+        endAt: dateTimeInputToIso(String(data.get("endAt")), timezone), timezone,
+        venue: String(data.get("venue") ?? ""), conductor: String(data.get("conductor") ?? ""),
+        program: String(data.get("program") ?? "")
+      });
+      setEditingEventId(""); setNotice(t("Evento atualizado.")); await loadOrgData();
+    } catch (err) { setError(err instanceof Error ? err.message : "Falha ao atualizar evento."); }
+  }
+
+  async function deleteEvent(event: Event) {
+    const confirmed = window.confirm(t('Tem certeza que deseja excluir o evento "{name}"?', { name: event.title }));
+    if (!confirmed) return;
+    setError("");
+    try {
+      await api.deleteEvent(orgId, event.id);
+      setNotice(t("Evento excluído.")); await loadOrgData();
+    } catch (err) { setError(err instanceof Error ? err.message : "Falha ao excluir evento."); }
+  }
+
   async function submitTrip(e: FormEvent<HTMLFormElement>) {
     e.preventDefault(); setError(""); setNotice("");
     const data = new FormData(e.currentTarget);
@@ -226,6 +306,12 @@ export function App() {
   async function saveTripEvents(trip: Trip, eventIds: string[]) {
     try { await api.orderTripEvents(orgId, trip.id, eventIds); await loadOrgData(); }
     catch (err) { setError(err instanceof Error ? err.message : "Falha ao atualizar eventos da viagem."); }
+  }
+
+  async function toggleTripConfirmation(trip: Trip) {
+    const status = trip.status === "PLANNING" ? "CONFIRMED" : "PLANNING";
+    try { await api.updateTripStatus(orgId, trip.id, status); await loadOrgData(); }
+    catch (err) { setError(err instanceof Error ? err.message : "Falha ao atualizar o estado da viagem."); }
   }
 
   if (!user) return localizeTree(<main className="login-screen">
@@ -312,18 +398,18 @@ export function App() {
           <div className="form-actions"><button type="button" className="secondary" onClick={()=>setShowEventForm(false)}>Cancelar</button><button className="primary">Salvar evento</button></div>
         </form>}
         {!orgId ? <Empty title="Nenhuma instituição selecionada" text="Escolha uma orquestra no seletor à esquerda."/> :
-          <div className="panel"><div className="panel-heading"><div><h3>Próximos eventos</h3><p className="muted">Agenda cronológica da orquestra.</p></div><span className="count">{upcoming.length}</span></div>
-            {busy ? <p className="muted loading">Carregando agenda…</p> : upcoming.length===0 ? <Empty title="Agenda vazia" text="Quando os eventos forem cadastrados, aparecerão aqui."/> :
-              <div className="event-list">{upcoming.map((event)=><article className="event-row" key={event.id}>
-                <div className="date-tile"><strong>{new Date(event.startAt).toLocaleDateString(languages[language].locale,{day:"2-digit",timeZone:selectedOrg?.timezone})}</strong><small>{new Date(event.startAt).toLocaleDateString(languages[language].locale,{month:"short",timeZone:selectedOrg?.timezone}).replace(".","")}</small></div>
-                <div className="event-info"><div className="event-title"><h4>{event.title}</h4><span className={`pill ${event.status==="PUBLISHED"?"green":"neutral"}`}>{t(event.status)}</span></div><p>{t(event.type)} · {localizedDate(event.startAt)} – {localizedTime(event.endAt)}</p><div className="event-meta">{event.venue && <span>⌖ {event.venue}</span>}{event.conductor && <span>♩ {t("Regente")}: {event.conductor}</span>}</div>{event.program && <p className="program">{event.program}</p>}</div>
-              </article>)}</div>}
+          <div className="panel"><div className="panel-heading"><div><h3>Agenda</h3><p className="muted">Viagens e eventos em ordem cronológica.</p></div><span className="count">{agendaItems.length}</span></div>
+            {busy ? <p className="muted loading">Carregando agenda…</p> : agendaItems.length===0 ? <Empty title="Agenda vazia" text="Quando eventos ou viagens forem cadastrados, aparecerão aqui."/> :
+              <div className="agenda-list">{agendaItems.map((item) => item.kind === "trip" ? <article className="agenda-trip-card" key={`trip-${item.id}`}>
+                <div className="agenda-trip-heading"><div className="trip-card-icon"><MapPinned/></div><div><h3>{item.trip.title}</h3><p>{localizedDate(item.trip.startAt)} – {localizedDate(item.trip.endAt)}</p></div><span className="pill neutral">{t(item.trip.status)}</span>{canManage&&["PLANNING","CONFIRMED"].includes(item.trip.status)&&<button className="secondary trip-status-button" onClick={()=>void toggleTripConfirmation(item.trip)}>{t(item.trip.status==="PLANNING"?"Confirmar viagem":"Reabrir planejamento")}</button>}</div>
+                <div className="agenda-trip-events">{item.trip.eventLinks?.length ? item.trip.eventLinks.map((link) => renderAgendaEvent(link.event)) : <p className="muted">Nenhum evento associado a esta viagem.</p>}</div>
+              </article> : renderAgendaEvent(item.event))}</div>}
           </div>}
       </section> : <section>
         <div className="welcome-row"><div><h2>{t("Viagens e turnês")}</h2><p className="muted">{t("Agrupe eventos existentes em itinerários sem duplicá-los.")}</p></div>{canManage && orgId && <button className="primary" onClick={()=>setShowTripForm(!showTripForm)}><Plus size={17}/> {t("Nova viagem")}</button>}</div>
         {showTripForm && <form className="panel form-grid" onSubmit={submitTrip}><h3>Nova viagem / turnê</h3><label className="wide">Nome<input name="title" required placeholder="Turnê de outono"/></label><label>Início<input name="startAt" type="datetime-local" required/></label><label>Término<input name="endAt" type="datetime-local" required/></label><label className="wide">Descrição<textarea name="description" rows={2} placeholder="Objetivo e notas da viagem"/></label><div className="form-actions"><button type="button" className="secondary" onClick={()=>setShowTripForm(false)}>Cancelar</button><button className="primary">Criar viagem</button></div></form>}
         {!orgId ? <Empty title="Selecione uma orquestra" text="As viagens são separadas por instituição."/> : trips.length===0 ? <div className="panel"><Empty title="Nenhuma viagem cadastrada" text="Crie uma viagem e depois associe os eventos existentes."/></div> :
-          <div className="trip-grid">{trips.map((trip)=><article className="trip-card" key={trip.id}><div className="trip-card-icon"><MapPinned/></div><span className="pill neutral">{t(trip.status)}</span><h3>{trip.title}</h3><p>{localizedDate(trip.startAt)} – {localizedDate(trip.endAt)}</p><div className="trip-events"><strong>{trip.eventLinks?.length ?? 0} {t("eventos vinculados")}</strong>{trip.eventLinks?.map((link,index)=>{const ids=trip.eventLinks?.map((item)=>item.event.id)??[];return <div className="trip-event-link" key={link.event.id}><span>{index+1}. {link.event.title}</span>{canManage&&<span><button className="link-button" disabled={index===0} onClick={()=>void saveTripEvents(trip,ids.map((id,i)=>i===index?ids[index-1]!:i===index-1?ids[index]!:id))}>↑</button><button className="link-button" disabled={index===ids.length-1} onClick={()=>void saveTripEvents(trip,ids.map((id,i)=>i===index?ids[index+1]!:i===index+1?ids[index]!:id))}>↓</button><button className="link-button danger" title="Remover evento" onClick={()=>void api.detachEvent(orgId,trip.id,link.event.id).then(()=>loadOrgData()).catch((e)=>setError(e.message))}><X size={14}/></button></span>}</div>})}</div>{canManage&&<div className="trip-add"><select aria-label="Evento a adicionar" value={tripEventSelection[trip.id]??""} onChange={(e)=>setTripEventSelection({...tripEventSelection,[trip.id]:e.target.value})}><option value="">Escolha um evento</option>{events.filter((event)=>!trip.eventLinks?.some((link)=>link.event.id===event.id)).map((event)=><option key={event.id} value={event.id}>{event.title}</option>)}</select><button className="secondary" disabled={!tripEventSelection[trip.id]} onClick={()=>{const next=tripEventSelection[trip.id];if(next)void saveTripEvents(trip,[...(trip.eventLinks?.map((link)=>link.event.id)??[]),next]);}}>{t("Adicionar")}</button></div>}</article>)}</div>}
+          <div className="trip-grid">{trips.map((trip)=><article className="trip-card" key={trip.id}><div className="trip-card-icon"><MapPinned/></div><span className="pill neutral">{t(trip.status)}</span><h3>{trip.title}</h3><p>{localizedDate(trip.startAt)} – {localizedDate(trip.endAt)}</p>{canManage&&["PLANNING","CONFIRMED"].includes(trip.status)&&<button className="secondary trip-status-button" onClick={()=>void toggleTripConfirmation(trip)}>{t(trip.status==="PLANNING"?"Confirmar viagem":"Reabrir planejamento")}</button>}<div className="trip-events"><strong>{trip.eventLinks?.length ?? 0} {t("eventos vinculados")}</strong>{trip.eventLinks?.map((link,index)=>{const ids=trip.eventLinks?.map((item)=>item.event.id)??[];return <div className="trip-event-link" key={link.event.id}><span>{index+1}. {link.event.title}</span>{canManage&&<span><button className="link-button" disabled={index===0} onClick={()=>void saveTripEvents(trip,ids.map((id,i)=>i===index?ids[index-1]!:i===index-1?ids[index]!:id))}>↑</button><button className="link-button" disabled={index===ids.length-1} onClick={()=>void saveTripEvents(trip,ids.map((id,i)=>i===index?ids[index+1]!:i===index+1?ids[index]!:id))}>↓</button><button className="link-button danger" title="Remover evento" onClick={()=>void api.detachEvent(orgId,trip.id,link.event.id).then(()=>loadOrgData()).catch((e)=>setError(e.message))}><X size={14}/></button></span>}</div>})}</div>{canManage&&<div className="trip-add"><select aria-label="Evento a adicionar" value={tripEventSelection[trip.id]??""} onChange={(e)=>setTripEventSelection({...tripEventSelection,[trip.id]:e.target.value})}><option value="">Escolha um evento</option>{events.filter((event)=>!trip.eventLinks?.some((link)=>link.event.id===event.id)).map((event)=><option key={event.id} value={event.id}>{event.title}</option>)}</select><button className="secondary" disabled={!tripEventSelection[trip.id]} onClick={()=>{const next=tripEventSelection[trip.id];if(next)void saveTripEvents(trip,[...(trip.eventLinks?.map((link)=>link.event.id)??[]),next]);}}>{t("Adicionar")}</button></div>}</article>)}</div>}
       </section>}
       {tab==="team" && orgId && canAdmin && <section><div className="welcome-row"><div><h2>Equipe da orquestra</h2><p className="muted">Convide músicos e gerencie os vínculos existentes.</p></div></div><form className="panel form-grid" onSubmit={submitInvitation}><h3>Novo convite</h3><label>E-mail<input name="email" type="email" required/></label><label>Role<select name="roleKey" defaultValue="MUSICIAN"><option value="ORG_ADMIN">Administrador</option><option value="EVENT_MANAGER">Gestor de eventos</option><option value="MUSICIAN">Músico</option><option value="LIBRARIAN">Bibliotecário</option><option value="READ_ONLY">Somente leitura</option></select></label><div className="form-actions"><button className="primary">Criar convite</button></div>{inviteToken&&<div className="alert success wide">Convite criado. Copie e envie este link com o token: <code>{`${window.location.origin}/?invite=${encodeURIComponent(inviteToken)}`}</code></div>}</form><div className="panel"><div className="panel-heading"><div><h3>Membros</h3><p className="muted">Selecione um ou mais roles para cada pessoa.</p></div><span className="count">{members.length}</span></div>{members.map((member)=><div className="member-row" key={member.id}><span><strong>{member.user.name}</strong><small>{member.user.email} · {t(member.status)}</small></span><select multiple aria-label={t("Roles de {name}", {name: member.user.name})} value={member.roles.map((item)=>item.role.key)} onChange={(e)=>void api.updateMember(orgId,member.id,{roleKeys:Array.from(e.currentTarget.selectedOptions,(option)=>option.value)}).then(()=>loadTeam()).catch((err)=>setError(err.message))}><option value="ORG_ADMIN">Administrador</option><option value="EVENT_MANAGER">Gestor de eventos</option><option value="MUSICIAN">Músico</option><option value="LIBRARIAN">Bibliotecário</option><option value="READ_ONLY">Somente leitura</option></select><button className="secondary" onClick={()=>void api.updateMember(orgId,member.id,{status:member.status==="ACTIVE"?"SUSPENDED":"ACTIVE"}).then(()=>loadTeam()).catch((err)=>setError(err.message))}>{t(member.status==="ACTIVE"?"Suspender":"Reativar")}</button></div>)}</div>{invitations.length>0&&<div className="panel"><h3>Convites pendentes</h3>{invitations.map((invitation)=><div className="member-row" key={invitation.id}><span><strong>{invitation.email}</strong><small>{invitation.roleKeys.map((role)=>t(role)).join(", ")} · {t("expira em")} {localizedDate(invitation.expiresAt)}</small></span></div>)}</div>}</section>}
       {tab==="documents" && <section><div className="welcome-row"><div><h2>Biblioteca</h2><p className="muted">Arquivos privados da instituição, com acesso conforme a visibilidade definida.</p></div></div>{canLibrary&&<form className="panel form-grid" onSubmit={submitDocument}><h3>Adicionar documento</h3><label>Título<input name="title" placeholder="Partitura, programa, comunicado"/></label><label>Visibilidade<select name="visibility" defaultValue="MEMBERS"><option value="ADMINS_ONLY">Somente administradores</option><option value="STAFF">Equipe (administração, eventos e biblioteca)</option><option value="MEMBERS">Membros da orquestra</option><option value="PUBLIC">Público da orquestra (membros autenticados)</option></select></label><label className="wide">Arquivo<input type="file" name="file" accept=".pdf,.txt,.jpg,.jpeg,.png,.webp,.mp3,.wav,.docx" required/></label><div className="form-actions"><button className="primary">Enviar arquivo</button></div></form>}<div className="panel"><div className="panel-heading"><h3>Documentos disponíveis</h3><span className="count">{documents.length}</span></div>{documents.length===0?<Empty title="Biblioteca vazia" text="Os documentos disponíveis para seu role aparecerão aqui."/>:documents.map((doc)=><div className="member-row" key={doc.id}><span><strong>{doc.title}</strong><small>{doc.fileName} · {t(doc.visibility)} · {Math.ceil(Number(doc.sizeBytes)/1024)} KB</small></span><a className="secondary" href={api.documentUrl(orgId,doc.id)}>{t("Baixar")}</a>{canLibrary&&<button className="link-button danger" onClick={()=>void api.deleteDocument(orgId,doc.id).then(()=>loadDocuments()).catch((e)=>setError(e.message))}><X size={15}/></button>}</div>)}</div></section>}

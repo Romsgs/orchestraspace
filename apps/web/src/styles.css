@@ -114,6 +114,18 @@ button, a, input, select, textarea { -webkit-tap-highlight-color: transparent; }
 .alert.success { color: #246744; background: #edf7ef; border-color: #d3e8d7; }
 .alert button { border: 0; background: transparent; color: inherit; font-size: 18px; }
 .org-list, .event-list { display: grid; }
+.agenda-list { display: grid; gap: 14px; }
+.agenda-trip-card { overflow: hidden; border: 1px solid var(--line); border-radius: 12px; background: #fcfaf8; }
+.agenda-trip-heading { display: flex; align-items: center; gap: 12px; padding: 15px; }
+.agenda-trip-heading .trip-card-icon { width: 36px; height: 36px; }
+.agenda-trip-heading > div:nth-child(2) { flex: 1; min-width: 0; }
+.agenda-trip-heading h3 { margin: 0 0 3px; color: var(--ink); font: 700 15px Manrope, sans-serif; }
+.agenda-trip-heading p { margin: 0; color: var(--muted); font-size: 12px; }
+.trip-status-button { padding: 7px 10px; white-space: nowrap; font-size: 11px; }
+.trip-card > .trip-status-button { margin: 0 0 14px; }
+.agenda-trip-events { padding: 0 15px 4px 63px; }
+.agenda-trip-events > .event-row { padding: 13px 0; }
+.agenda-trip-events > p { margin: 0; padding: 0 0 12px; font-size: 12px; }
 .org-row { display: flex; align-items: center; gap: 12px; width: 100%; padding: 12px 3px; border: 0; border-top: 1px solid #f0e8e1; background: transparent; color: var(--ink); text-align: left; }
 .org-row > span:nth-child(2) { display: grid; gap: 4px; flex: 1; }
 .org-row small, .member-row small { color: var(--muted); font-size: 11px; }
@@ -121,6 +133,13 @@ button, a, input, select, textarea { -webkit-tap-highlight-color: transparent; }
 .pill.green { color: #276646; background: #e9f4eb; }
 .pill.neutral { color: #725e53; background: #f1e9e2; }
 .event-row { display: flex; gap: 15px; padding: 15px 0; border-top: 1px solid #f0e8e1; }
+.event-actions { display: flex; align-items: flex-start; gap: 6px; }
+.event-actions .secondary { width: 32px; min-width: 32px; padding: 7px; }
+.event-actions .danger-button { color: #9b3535; }
+.event-edit-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; padding: 16px; border: 1px solid var(--line); border-radius: 10px; background: #fcfaf8; }
+.event-edit-form > label { display: grid; gap: 5px; color: var(--muted); font-size: 11px; font-weight: 700; }
+.event-edit-form > label.wide, .event-edit-form > .wide { grid-column: 1 / -1; }
+.event-edit-form .form-actions { justify-content: flex-end; }
 .date-tile { display: flex; flex-direction: column; align-items: center; justify-content: center; width: 56px; height: 60px; flex: 0 0 auto; border-radius: 10px; color: var(--wine); background: #f7eae3; }
 .date-tile strong { font-size: 19px; }
 .date-tile small { font-size: 10px; text-transform: uppercase; }
@@ -203,6 +222,9 @@ button, a, input, select, textarea { -webkit-tap-highlight-color: transparent; }
   .form-grid { grid-template-columns: 1fr; }
   .form-grid > * { grid-column: 1 / -1; }
   .event-row { gap: 10px; }
+  .event-actions { flex-direction: column; }
+  .event-edit-form { grid-template-columns: 1fr; }
+  .event-edit-form > label.wide, .event-edit-form > .wide { grid-column: 1; }
   .event-title { align-items: flex-start; flex-direction: column; gap: 5px; }
   .event-meta { flex-direction: column; gap: 4px; }
   .trip-grid { grid-template-columns: 1fr; }
