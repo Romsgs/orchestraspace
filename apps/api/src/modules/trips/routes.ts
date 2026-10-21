@@ -30,7 +30,18 @@ tripsRouter.get("/:organizationId/trips", requireAuth, asyncHandler(async (req, 
   const trips = await prisma.trip.findMany({
     where: { organizationId },
     include: {
-      eventLinks: { include: { event: true }, orderBy: { sortOrder: "asc" } },
+      eventLinks: {
+        include: {
+          event: {
+            include: {
+              musicians: {
+                include: { membership: { include: { user: { select: { id: true, name: true, email: true } } } } }
+              }
+            }
+          }
+        },
+        orderBy: { sortOrder: "asc" }
+      },
       stops: { orderBy: { sortOrder: "asc" } }
     },
     orderBy: { startAt: "asc" }

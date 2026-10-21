@@ -140,6 +140,15 @@ button, a, input, select, textarea { -webkit-tap-highlight-color: transparent; }
 .event-edit-form > label { display: grid; gap: 5px; color: var(--muted); font-size: 11px; font-weight: 700; }
 .event-edit-form > label.wide, .event-edit-form > .wide { grid-column: 1 / -1; }
 .event-edit-form .form-actions { justify-content: flex-end; }
+.event-lineup { display: grid; gap: 12px; min-width: 0; margin: 0; padding: 12px; border: 1px solid var(--line); border-radius: 9px; }
+.event-lineup legend { padding: 0 5px; color: var(--ink); font-size: 12px; font-weight: 700; }
+.lineup-section { display: grid; gap: 7px; }
+.lineup-section h4 { margin: 0; color: var(--wine); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+.lineup-checkboxes { display: flex; flex-wrap: wrap; gap: 7px 14px; }
+.lineup-checkboxes label { display: inline-flex; align-items: center; gap: 6px; color: var(--ink); font-size: 12px; font-weight: 500; }
+.lineup-checkboxes input { width: auto; margin: 0; accent-color: var(--wine); }
+.event-roster { display: grid; gap: 3px; margin-top: 8px; color: #735f54; font-size: 11px; }
+.event-roster > strong { color: var(--ink); font-size: 11px; }
 .date-tile { display: flex; flex-direction: column; align-items: center; justify-content: center; width: 56px; height: 60px; flex: 0 0 auto; border-radius: 10px; color: var(--wine); background: #f7eae3; }
 .date-tile strong { font-size: 19px; }
 .date-tile small { font-size: 10px; text-transform: uppercase; }

@@ -1,6 +1,6 @@
 import { cloneElement, FormEvent, isValidElement, ReactNode, useEffect, useMemo, useState } from "react";
-import { CalendarDays, ChevronDown, Crown, FileText, LogOut, MapPinned, Music2, Pencil, Plus, RefreshCw, ShieldCheck, Trash2, Users, X } from "lucide-react";
-import { api, Document as OrgDocument, Event, Invitation, Membership, Organization, Trip, User } from "./api";
+import { CalendarDays, ChevronDown, Crown, FileText, Filter, LogOut, MapPinned, Music2, Pencil, Plus, RefreshCw, ShieldCheck, Trash2, Users, X } from "lucide-react";
+import { api, Document as OrgDocument, Event, instruments, Invitation, Membership, MusicianOption, Organization, Trip, User } from "./api";
 import languages from "./languages.json";
 
 type Tab = "agenda" | "trips" | "team" | "documents" | "system";
@@ -83,6 +83,7 @@ export function App() {
   const [orgId, setOrgId] = useState("");
   const [events, setEvents] = useState<Event[]>([]);
   const [trips, setTrips] = useState<Trip[]>([]);
+  const [musicians, setMusicians] = useState<MusicianOption[]>([]);
   const [tab, setTab] = useState<Tab>("agenda");
   const [busy, setBusy] = useState(false);
   const [acceptingInvitation, setAcceptingInvitation] = useState(false);
@@ -94,6 +95,13 @@ export function App() {
   const [showEventForm, setShowEventForm] = useState(false);
   const [showTripForm, setShowTripForm] = useState(false);
   const [editingEventId, setEditingEventId] = useState("");
+  const [agendaFromDate, setAgendaFromDate] = useState(() => {
+    const today = new Date();
+    return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+  });
+  const [showAgendaDateFilter, setShowAgendaDateFilter] = useState(false);
+  const [lineupDraft, setLineupDraft] = useState<string[]>([]);
+  const [inviteRole, setInviteRole] = useState("MUSICIAN");
   const [members, setMembers] = useState<Membership[]>([]);
   const [invitations, setInvitations] = useState<Invitation[]>([]);
   const [documents, setDocuments] = useState<OrgDocument[]>([]);
@@ -117,12 +125,13 @@ export function App() {
   }
 
   async function loadOrgData(id = orgId) {
-    if (!id) { setEvents([]); setTrips([]); return; }
+    if (!id) { setEvents([]); setTrips([]); setMusicians([]); return; }
     setBusy(true); setError("");
     try {
-      const [eventResult, tripResult] = await Promise.all([api.events(id), api.trips(id)]);
+      const [eventResult, tripResult, musicianResult] = await Promise.all([api.events(id), api.trips(id), api.musicians(id)]);
       setEvents(eventResult.events);
       setTrips(tripResult.trips);
+      setMusicians(musicianResult.memberships);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Não foi possível carregar os dados.");
     } finally { setBusy(false); }
@@ -156,15 +165,21 @@ export function App() {
   const hasRole = (role: string) => Boolean(user?.isSuperAdmin || user?.memberships?.some((m) => m.organization.id === orgId && m.roles.some((r) => r.role.key === role)) || organizations.find((o) => o.id === orgId)?.roles?.includes(role));
   const canAdmin = hasRole("ORG_ADMIN");
   const canLibrary = canAdmin || hasRole("LIBRARIAN");
+  const agendaCutoff = new Date(`${agendaFromDate}T00:00:00`);
   const agendaItems = useMemo(() => {
     const linkedEventIds = new Set(trips.flatMap((trip) => trip.eventLinks?.map((link) => link.event.id) ?? []));
     return [
-      ...trips.map((trip) => ({ kind: "trip" as const, id: trip.id, startAt: trip.startAt, trip })),
-      ...events.filter((event) => !linkedEventIds.has(event.id)).map((event) => ({ kind: "event" as const, id: event.id, startAt: event.startAt, event }))
+      ...trips.filter((trip) => new Date(trip.endAt) >= agendaCutoff).map((trip) => ({ kind: "trip" as const, id: trip.id, startAt: trip.startAt, trip })),
+      ...events.filter((event) => !linkedEventIds.has(event.id) && new Date(event.startAt) >= agendaCutoff).map((event) => ({ kind: "event" as const, id: event.id, startAt: event.startAt, event }))
     ].sort((a, b) => +new Date(a.startAt) - +new Date(b.startAt));
-  }, [events, trips]);
+  }, [agendaCutoff.getTime(), events, trips]);
   const renderAgendaEvent = (event: Event) => {
     const timezone = event.timezone ?? selectedOrg?.timezone ?? "Europe/Sofia";
+    const assignmentsBySection = (event.musicians ?? []).reduce<Record<string, string[]>>((sections, musician) => {
+      const section = musician.membership.instrument ?? "NO_INSTRUMENT";
+      (sections[section] ??= []).push(musician.membership.user.name);
+      return sections;
+    }, {});
     if (editingEventId === event.id) return <form className="event-edit-form" key={event.id} onSubmit={(e) => void saveEventEdits(e, event)}>
       <label>{t("Título")}<input name="title" defaultValue={event.title} required minLength={2}/></label>
       <label>{t("Status")}<select name="status" defaultValue={event.status}><option value="DRAFT">{t("DRAFT")}</option><option value="PUBLISHED">{t("PUBLISHED")}</option><option value="CANCELLED">{t("CANCELLED")}</option><option value="COMPLETED">{t("COMPLETED")}</option></select></label>
@@ -173,12 +188,21 @@ export function App() {
       <label>{t("Local")}<input name="venue" defaultValue={event.venue ?? ""}/></label>
       <label>{t("Regente")}<input name="conductor" defaultValue={event.conductor ?? ""}/></label>
       <label className="wide">{t("Programa")}<textarea name="program" rows={3} defaultValue={event.program ?? ""}/></label>
+      <fieldset className="event-lineup wide"><legend>{t("Escala da sessão")}</legend>
+        {instruments.map((instrument) => {
+          const sectionMusicians = musicians.filter((musician) => musician.instrument === instrument);
+          if (!sectionMusicians.length) return null;
+          return <div className="lineup-section" key={instrument}><h4>{t(instrument)}</h4><div className="lineup-checkboxes">{sectionMusicians.map((musician) => <label key={musician.id}><input type="checkbox" checked={lineupDraft.includes(musician.id)} onChange={(e) => setLineupDraft((current) => e.target.checked ? [...current, musician.id] : current.filter((id) => id !== musician.id))}/>{musician.user.name}</label>)}</div></div>;
+        })}
+        {musicians.some((musician) => !musician.instrument) && <div className="lineup-section"><h4>{t("NO_INSTRUMENT")}</h4><div className="lineup-checkboxes">{musicians.filter((musician) => !musician.instrument).map((musician) => <label key={musician.id}><input type="checkbox" checked={lineupDraft.includes(musician.id)} onChange={(e) => setLineupDraft((current) => e.target.checked ? [...current, musician.id] : current.filter((id) => id !== musician.id))}/>{musician.user.name}</label>)}</div></div>}
+        {musicians.length === 0 && <p className="muted">{t("Nenhum músico designado.")}</p>}
+      </fieldset>
       <div className="form-actions wide"><button type="button" className="secondary" onClick={() => setEditingEventId("")}>{t("Cancelar")}</button><button className="primary">{t("Salvar alterações")}</button></div>
     </form>;
     return <article className="event-row" key={event.id}>
       <div className="date-tile"><strong>{new Date(event.startAt).toLocaleDateString(languages[language].locale,{day:"2-digit",timeZone:timezone})}</strong><small>{new Date(event.startAt).toLocaleDateString(languages[language].locale,{month:"short",timeZone:timezone}).replace(".","")}</small></div>
-      <div className="event-info"><div className="event-title"><h4>{event.title}</h4><span className={`pill ${event.status==="PUBLISHED"?"green":"neutral"}`}>{t(event.status)}</span></div><p>{t(event.type)} · {localizedDate(event.startAt, timezone)} – {localizedTime(event.endAt, timezone)}</p><div className="event-meta">{event.venue && <span>⌖ {event.venue}</span>}{event.conductor && <span>♩ {t("Regente")}: {event.conductor}</span>}</div>{event.program && <p className="program">{event.program}</p>}</div>
-      {canManage&&<div className="event-actions"><button className="secondary" aria-label={t("Editar evento")} title={t("Editar evento")} onClick={()=>setEditingEventId(event.id)}><Pencil size={15}/></button><button className="secondary danger-button" aria-label={t("Excluir evento")} title={t("Excluir evento")} onClick={()=>void deleteEvent(event)}><Trash2 size={15}/></button></div>}
+      <div className="event-info"><div className="event-title"><h4>{event.title}</h4><span className={`pill ${event.status==="PUBLISHED"?"green":"neutral"}`}>{t(event.status)}</span></div><p>{t(event.type)} · {localizedDate(event.startAt, timezone)} – {localizedTime(event.endAt, timezone)}</p><div className="event-meta">{event.venue && <span>⌖ {event.venue}</span>}{event.conductor && <span>♩ {t("Regente")}: {event.conductor}</span>}</div>{event.program && <p className="program">{event.program}</p>}{Object.entries(assignmentsBySection).length>0&&<div className="event-roster"><strong>{t("Escala")}</strong>{Object.entries(assignmentsBySection).map(([section,names])=><span key={section}><b>{t(section)}:</b> {names.join(", ")}</span>)}</div>}</div>
+      {canManage&&<div className="event-actions"><button className="secondary" aria-label={t("Editar evento")} title={t("Editar evento")} onClick={()=>{setLineupDraft((event.musicians??[]).map(({membershipId})=>membershipId));setEditingEventId(event.id);}}><Pencil size={15}/></button><button className="secondary danger-button" aria-label={t("Excluir evento")} title={t("Excluir evento")} onClick={()=>void deleteEvent(event)}><Trash2 size={15}/></button></div>}
     </article>;
   };
 
@@ -248,6 +272,7 @@ export function App() {
         venue: String(data.get("venue") ?? ""), conductor: String(data.get("conductor") ?? ""),
         program: String(data.get("program") ?? "")
       });
+      await api.updateEventLineup(orgId, event.id, lineupDraft);
       setEditingEventId(""); setNotice(t("Evento atualizado.")); await loadOrgData();
     } catch (err) { setError(err instanceof Error ? err.message : "Falha ao atualizar evento."); }
   }
@@ -258,6 +283,7 @@ export function App() {
     setError("");
     try {
       await api.deleteEvent(orgId, event.id);
+      if (editingEventId === event.id) setEditingEventId("");
       setNotice(t("Evento excluído.")); await loadOrgData();
     } catch (err) { setError(err instanceof Error ? err.message : "Falha ao excluir evento."); }
   }
@@ -281,8 +307,9 @@ export function App() {
     if (!orgId) { setError(t("Selecione uma orquestra")); return; }
     const data = new FormData(e.currentTarget);
     try {
-      const result = await api.createInvitation(orgId, String(data.get("email")), String(data.get("roleKey")));
-      setInviteToken(result.token); await loadTeam(); e.currentTarget.reset();
+      const roleKey = String(data.get("roleKey"));
+      const result = await api.createInvitation(orgId, String(data.get("email")), roleKey, roleKey === "MUSICIAN" ? String(data.get("instrument")) : undefined);
+      setInviteToken(result.token); await loadTeam(); e.currentTarget.reset(); setInviteRole("MUSICIAN");
     } catch (err) { setError(err instanceof Error ? err.message : "Falha ao criar convite."); }
   }
 
@@ -317,7 +344,7 @@ export function App() {
   if (!user) return localizeTree(<main className="login-screen">
     <label className="language-picker login-language" aria-label={t("Idioma")}><span className="language-current"><span className="language-flag">{languages[language].flag}</span><span className="language-name">{languages[language].name}</span></span><select aria-label={t("Idioma")} value={language} onChange={(e) => setAppLanguage(e.target.value as LanguageCode)}>{languageCodes.map((code) => <option key={code} value={code}>{languages[code].flag} {languages[code].name}</option>)}</select><ChevronDown size={14}/></label>
     <div className="login-art">
-      <div className="brand"><div className="brand-mark"><Music2 size={22}/></div><span>Orchestra<span className="brand-light"> Platform</span></span></div>
+      <div className="brand"><div className="brand-mark"><Music2 size={22}/></div><span>Orchestra<span className="brand-light"> Space</span></span></div>
       <div className="hero-copy">
         <span className="eyebrow">ORCHESTRA OPERATIONS</span>
         <h1>Uma agenda.<br/><em>Toda a orquestra.</em></h1>
@@ -341,7 +368,7 @@ export function App() {
 
   return localizeTree(<div className="app-shell">
     <aside className="sidebar">
-      <div className="brand"><div className="brand-mark"><Music2 size={21}/></div><span>Orchestra<span className="brand-light"> Platform</span></span></div>
+      <div className="brand"><div className="brand-mark"><Music2 size={21}/></div><span>Orchestra<span className="brand-light"> Space</span></span></div>
       <div className="side-caption">WORKSPACE</div>
       <label className="org-picker"><span>{t("Instituição ativa")}</span><select value={orgId} onChange={(e)=>{const nextOrgId=e.target.value;setOrgId(nextOrgId);if(!nextOrgId&&tab==="team")setTab("agenda");}}><option value="">{t("Selecione uma orquestra")}</option>{organizations.map((o)=><option key={o.id} value={o.id}>{o.name}</option>)}</select><ChevronDown size={14}/></label>
       <nav>
@@ -398,11 +425,11 @@ export function App() {
           <div className="form-actions"><button type="button" className="secondary" onClick={()=>setShowEventForm(false)}>Cancelar</button><button className="primary">Salvar evento</button></div>
         </form>}
         {!orgId ? <Empty title="Nenhuma instituição selecionada" text="Escolha uma orquestra no seletor à esquerda."/> :
-          <div className="panel"><div className="panel-heading"><div><h3>Agenda</h3><p className="muted">Viagens e eventos em ordem cronológica.</p></div><span className="count">{agendaItems.length}</span></div>
+          <div className="panel"><div className="panel-heading"><div><h3>Agenda</h3><p className="muted">Viagens e eventos em ordem cronológica.</p></div><button className="secondary" onClick={()=>setShowAgendaDateFilter((visible)=>!visible)}><Filter size={15}/>{showAgendaDateFilter?t("Ocultar filtro"):t("Filtrar por data")}</button>{showAgendaDateFilter&&<label className="agenda-date-filter">{t("A partir de")}<input aria-label={t("Filtrar agenda a partir da data")} type="date" value={agendaFromDate} onChange={(e)=>setAgendaFromDate(e.target.value)}/></label>}<span className="count">{agendaItems.length}</span></div>
             {busy ? <p className="muted loading">Carregando agenda…</p> : agendaItems.length===0 ? <Empty title="Agenda vazia" text="Quando eventos ou viagens forem cadastrados, aparecerão aqui."/> :
               <div className="agenda-list">{agendaItems.map((item) => item.kind === "trip" ? <article className="agenda-trip-card" key={`trip-${item.id}`}>
                 <div className="agenda-trip-heading"><div className="trip-card-icon"><MapPinned/></div><div><h3>{item.trip.title}</h3><p>{localizedDate(item.trip.startAt)} – {localizedDate(item.trip.endAt)}</p></div><span className="pill neutral">{t(item.trip.status)}</span>{canManage&&["PLANNING","CONFIRMED"].includes(item.trip.status)&&<button className="secondary trip-status-button" onClick={()=>void toggleTripConfirmation(item.trip)}>{t(item.trip.status==="PLANNING"?"Confirmar viagem":"Reabrir planejamento")}</button>}</div>
-                <div className="agenda-trip-events">{item.trip.eventLinks?.length ? item.trip.eventLinks.map((link) => renderAgendaEvent(link.event)) : <p className="muted">Nenhum evento associado a esta viagem.</p>}</div>
+                <div className="agenda-trip-events">{item.trip.eventLinks?.filter((link) => new Date(link.event.startAt) >= agendaCutoff).length ? item.trip.eventLinks.filter((link) => new Date(link.event.startAt) >= agendaCutoff).map((link) => renderAgendaEvent(link.event)) : <p className="muted">Nenhum evento associado a partir desta data.</p>}</div>
               </article> : renderAgendaEvent(item.event))}</div>}
           </div>}
       </section> : <section>
@@ -411,9 +438,24 @@ export function App() {
         {!orgId ? <Empty title="Selecione uma orquestra" text="As viagens são separadas por instituição."/> : trips.length===0 ? <div className="panel"><Empty title="Nenhuma viagem cadastrada" text="Crie uma viagem e depois associe os eventos existentes."/></div> :
           <div className="trip-grid">{trips.map((trip)=><article className="trip-card" key={trip.id}><div className="trip-card-icon"><MapPinned/></div><span className="pill neutral">{t(trip.status)}</span><h3>{trip.title}</h3><p>{localizedDate(trip.startAt)} – {localizedDate(trip.endAt)}</p>{canManage&&["PLANNING","CONFIRMED"].includes(trip.status)&&<button className="secondary trip-status-button" onClick={()=>void toggleTripConfirmation(trip)}>{t(trip.status==="PLANNING"?"Confirmar viagem":"Reabrir planejamento")}</button>}<div className="trip-events"><strong>{trip.eventLinks?.length ?? 0} {t("eventos vinculados")}</strong>{trip.eventLinks?.map((link,index)=>{const ids=trip.eventLinks?.map((item)=>item.event.id)??[];return <div className="trip-event-link" key={link.event.id}><span>{index+1}. {link.event.title}</span>{canManage&&<span><button className="link-button" disabled={index===0} onClick={()=>void saveTripEvents(trip,ids.map((id,i)=>i===index?ids[index-1]!:i===index-1?ids[index]!:id))}>↑</button><button className="link-button" disabled={index===ids.length-1} onClick={()=>void saveTripEvents(trip,ids.map((id,i)=>i===index?ids[index+1]!:i===index+1?ids[index]!:id))}>↓</button><button className="link-button danger" title="Remover evento" onClick={()=>void api.detachEvent(orgId,trip.id,link.event.id).then(()=>loadOrgData()).catch((e)=>setError(e.message))}><X size={14}/></button></span>}</div>})}</div>{canManage&&<div className="trip-add"><select aria-label="Evento a adicionar" value={tripEventSelection[trip.id]??""} onChange={(e)=>setTripEventSelection({...tripEventSelection,[trip.id]:e.target.value})}><option value="">Escolha um evento</option>{events.filter((event)=>!trip.eventLinks?.some((link)=>link.event.id===event.id)).map((event)=><option key={event.id} value={event.id}>{event.title}</option>)}</select><button className="secondary" disabled={!tripEventSelection[trip.id]} onClick={()=>{const next=tripEventSelection[trip.id];if(next)void saveTripEvents(trip,[...(trip.eventLinks?.map((link)=>link.event.id)??[]),next]);}}>{t("Adicionar")}</button></div>}</article>)}</div>}
       </section>}
-      {tab==="team" && orgId && canAdmin && <section><div className="welcome-row"><div><h2>Equipe da orquestra</h2><p className="muted">Convide músicos e gerencie os vínculos existentes.</p></div></div><form className="panel form-grid" onSubmit={submitInvitation}><h3>Novo convite</h3><label>E-mail<input name="email" type="email" required/></label><label>Role<select name="roleKey" defaultValue="MUSICIAN"><option value="ORG_ADMIN">Administrador</option><option value="EVENT_MANAGER">Gestor de eventos</option><option value="MUSICIAN">Músico</option><option value="LIBRARIAN">Bibliotecário</option><option value="READ_ONLY">Somente leitura</option></select></label><div className="form-actions"><button className="primary">Criar convite</button></div>{inviteToken&&<div className="alert success wide">Convite criado. Copie e envie este link com o token: <code>{`${window.location.origin}/?invite=${encodeURIComponent(inviteToken)}`}</code></div>}</form><div className="panel"><div className="panel-heading"><div><h3>Membros</h3><p className="muted">Selecione um ou mais roles para cada pessoa.</p></div><span className="count">{members.length}</span></div>{members.map((member)=><div className="member-row" key={member.id}><span><strong>{member.user.name}</strong><small>{member.user.email} · {t(member.status)}</small></span><select multiple aria-label={t("Roles de {name}", {name: member.user.name})} value={member.roles.map((item)=>item.role.key)} onChange={(e)=>void api.updateMember(orgId,member.id,{roleKeys:Array.from(e.currentTarget.selectedOptions,(option)=>option.value)}).then(()=>loadTeam()).catch((err)=>setError(err.message))}><option value="ORG_ADMIN">Administrador</option><option value="EVENT_MANAGER">Gestor de eventos</option><option value="MUSICIAN">Músico</option><option value="LIBRARIAN">Bibliotecário</option><option value="READ_ONLY">Somente leitura</option></select><button className="secondary" onClick={()=>void api.updateMember(orgId,member.id,{status:member.status==="ACTIVE"?"SUSPENDED":"ACTIVE"}).then(()=>loadTeam()).catch((err)=>setError(err.message))}>{t(member.status==="ACTIVE"?"Suspender":"Reativar")}</button></div>)}</div>{invitations.length>0&&<div className="panel"><h3>Convites pendentes</h3>{invitations.map((invitation)=><div className="member-row" key={invitation.id}><span><strong>{invitation.email}</strong><small>{invitation.roleKeys.map((role)=>t(role)).join(", ")} · {t("expira em")} {localizedDate(invitation.expiresAt)}</small></span></div>)}</div>}</section>}
+      {tab === "team" && orgId && canAdmin && <section>
+        <div className="welcome-row"><div><h2>Equipe da orquestra</h2><p className="muted">Convide músicos e gerencie os vínculos existentes.</p></div></div>
+        <form className="panel form-grid" onSubmit={submitInvitation}>
+          <h3>Novo convite</h3><label>E-mail<input name="email" type="email" required/></label>
+          <label>Role<select name="roleKey" value={inviteRole} onChange={(e) => setInviteRole(e.target.value)}><option value="ORG_ADMIN">Administrador</option><option value="EVENT_MANAGER">Gestor de eventos</option><option value="MUSICIAN">Músico</option><option value="LIBRARIAN">Bibliotecário</option><option value="READ_ONLY">Somente leitura</option></select></label>
+          {inviteRole === "MUSICIAN" && <label>Instrumento<select name="instrument" required defaultValue=""><option value="" disabled>Selecione o instrumento</option>{instruments.map((instrument)=><option key={instrument} value={instrument}>{t(instrument)}</option>)}</select></label>}
+          <div className="form-actions"><button className="primary">Criar convite</button></div>
+          {inviteToken&&<div className="alert success wide">Convite criado. Copie e envie este link com o token: <code>{`${window.location.origin}/?invite=${encodeURIComponent(inviteToken)}`}</code></div>}
+        </form>
+        <div className="panel"><div className="panel-heading"><div><h3>Membros</h3><p className="muted">Selecione os roles e o instrumento de cada músico.</p></div><span className="count">{members.length}</span></div>
+          {members.map((member)=>{const isMusician=member.roles.some((item)=>item.role.key==="MUSICIAN");return <div className="member-row" key={member.id}><span><strong>{member.user.name}</strong><small>{member.user.email} · {t(member.status)}{isMusician&&member.instrument?` · ${t(member.instrument)}`:""}</small></span><select multiple aria-label={t("Roles de {name}",{name:member.user.name})} value={member.roles.map((item)=>item.role.key)} onChange={(e)=>void api.updateMember(orgId,member.id,{roleKeys:Array.from(e.currentTarget.selectedOptions,(option)=>option.value),...(Array.from(e.currentTarget.selectedOptions,(option)=>option.value).includes("MUSICIAN")&&member.instrument?{instrument:member.instrument}:{})}).then(()=>loadTeam()).catch((err)=>setError(err.message))}><option value="ORG_ADMIN">Administrador</option><option value="EVENT_MANAGER">Gestor de eventos</option><option value="MUSICIAN">Músico</option><option value="LIBRARIAN">Bibliotecário</option><option value="READ_ONLY">Somente leitura</option></select>
+            {isMusician&&<select aria-label={`${t("Instrumento")} ${member.user.name}`} value={member.instrument??""} onChange={(e)=>void api.updateMember(orgId,member.id,{instrument:e.target.value}).then(()=>loadTeam()).catch((err)=>setError(err.message))}><option value="" disabled>{t("Selecione o instrumento")}</option>{instruments.map((instrument)=><option key={instrument} value={instrument}>{t(instrument)}</option>)}</select>}
+            <button className="secondary" onClick={()=>void api.updateMember(orgId,member.id,{status:member.status==="ACTIVE"?"SUSPENDED":"ACTIVE"}).then(()=>loadTeam()).catch((err)=>setError(err.message))}>{t(member.status==="ACTIVE"?"Suspender":"Reativar")}</button></div>})}
+        </div>
+        {invitations.length>0&&<div className="panel"><h3>Convites pendentes</h3>{invitations.map((invitation)=><div className="member-row" key={invitation.id}><span><strong>{invitation.email}</strong><small>{invitation.roleKeys.map((role)=>t(role)).join(", ")}{invitation.instrument?` · ${t(invitation.instrument)}`:""} · {t("expira em")} {localizedDate(invitation.expiresAt)}</small></span></div>)}</div>}
+      </section>}
       {tab==="documents" && <section><div className="welcome-row"><div><h2>Biblioteca</h2><p className="muted">Arquivos privados da instituição, com acesso conforme a visibilidade definida.</p></div></div>{canLibrary&&<form className="panel form-grid" onSubmit={submitDocument}><h3>Adicionar documento</h3><label>Título<input name="title" placeholder="Partitura, programa, comunicado"/></label><label>Visibilidade<select name="visibility" defaultValue="MEMBERS"><option value="ADMINS_ONLY">Somente administradores</option><option value="STAFF">Equipe (administração, eventos e biblioteca)</option><option value="MEMBERS">Membros da orquestra</option><option value="PUBLIC">Público da orquestra (membros autenticados)</option></select></label><label className="wide">Arquivo<input type="file" name="file" accept=".pdf,.txt,.jpg,.jpeg,.png,.webp,.mp3,.wav,.docx" required/></label><div className="form-actions"><button className="primary">Enviar arquivo</button></div></form>}<div className="panel"><div className="panel-heading"><h3>Documentos disponíveis</h3><span className="count">{documents.length}</span></div>{documents.length===0?<Empty title="Biblioteca vazia" text="Os documentos disponíveis para seu role aparecerão aqui."/>:documents.map((doc)=><div className="member-row" key={doc.id}><span><strong>{doc.title}</strong><small>{doc.fileName} · {t(doc.visibility)} · {Math.ceil(Number(doc.sizeBytes)/1024)} KB</small></span><a className="secondary" href={api.documentUrl(orgId,doc.id)}>{t("Baixar")}</a>{canLibrary&&<button className="link-button danger" onClick={()=>void api.deleteDocument(orgId,doc.id).then(()=>loadDocuments()).catch((e)=>setError(e.message))}><X size={15}/></button>}</div>)}</div></section>}
-      <footer className="footer">ORCHESTRA PLATFORM <span>·</span> versão 0.2.0 <span>·</span> Feito para equipes musicais</footer>
+      <footer className="footer">ORCHESTRA SPACE <span>·</span> versão 0.2.0 <span>·</span> Feito para equipes musicais</footer>
     </main>
   </div>);
 }

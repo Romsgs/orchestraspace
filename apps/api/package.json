@@ -9,6 +9,7 @@
     "start": "node dist/server.js",
     "prisma:generate": "prisma generate",
     "prisma:push": "prisma db push",
+    "make_mongo_backup": "node scripts/make-mongo-backup.mjs",
     "seed:superadmin": "tsx prisma/seed.ts",
     "test": "vitest run"
   },

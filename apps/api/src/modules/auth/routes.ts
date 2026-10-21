@@ -85,11 +85,11 @@ authRouter.post("/accept-invitation", asyncHandler(async (req, res) => {
     const membership = await tx.membership.findUnique({ where: { userId_organizationId: { userId: account.id, organizationId: invitation.organizationId } } });
     if (!membership) {
       await tx.membership.create({ data: {
-        userId: account.id, organizationId: invitation.organizationId, status: "ACTIVE", joinedAt: new Date(),
+        userId: account.id, organizationId: invitation.organizationId, status: "ACTIVE", joinedAt: new Date(), instrument: invitation.instrument,
         roles: { create: roles.map((role) => ({ roleId: role.id })) }
       } });
     } else {
-      await tx.membership.update({ where: { id: membership.id }, data: { status: "ACTIVE" } });
+      await tx.membership.update({ where: { id: membership.id }, data: { status: "ACTIVE", instrument: invitation.instrument ?? undefined } });
       for (const role of roles) {
         await tx.membershipRole.upsert({
           where: { membershipId_roleId: { membershipId: membership.id, roleId: role.id } },

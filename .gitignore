@@ -4,6 +4,7 @@ dist/
 **/dist/
 coverage/
 **/coverage/
+/backups/
 
 # Local environment files and credentials. Commit only sanitized examples.
 .env

@@ -22,7 +22,7 @@ organizationsRouter.get("/:organizationId/members", requireAuth, asyncHandler(as
       organizationId,
       OR: [{ acceptedAt: null }, { acceptedAt: { isSet: false } }],
       expiresAt: { gt: new Date() }
-    }, select: { id: true, email: true, roleKeys: true, expiresAt: true, createdAt: true }, orderBy: { createdAt: "desc" } })
+    }, select: { id: true, email: true, roleKeys: true, instrument: true, expiresAt: true, createdAt: true }, orderBy: { createdAt: "desc" } })
   ]);
   res.json({ memberships, invitations });
 }));
@@ -116,8 +116,10 @@ organizationsRouter.post("/:organizationId/invitations", requireAuth, asyncHandl
   const organizationId = z.string().min(1).parse(req.params.organizationId);
   const input = z.object({
     email: z.string().email().transform((v) => v.toLowerCase().trim()),
-    roleKey: z.enum(["ORG_ADMIN", "EVENT_MANAGER", "MUSICIAN", "LIBRARIAN", "READ_ONLY"]).default("MUSICIAN")
+    roleKey: z.enum(["ORG_ADMIN", "EVENT_MANAGER", "MUSICIAN", "LIBRARIAN", "READ_ONLY"]).default("MUSICIAN"),
+    instrument: z.enum(["PERCUSSION", "PIANO", "HARP", "VIOLIN", "VIOLA", "CELLO", "DOUBLE_BASS", "FLUTE", "OBOE", "CLARINET", "BASSOON", "TRUMPET", "FRENCH_HORN", "TROMBONE", "TUBA"]).optional()
   }).parse(req.body);
+  if (input.roleKey === "MUSICIAN" && !input.instrument) { res.status(400).json({ error: "INSTRUMENT_REQUIRED", message: "Selecione o instrumento do músico." }); return; }
   const actor = req.currentUser!;
   if (!actor.isSuperAdmin) {
     const membership = await prisma.membership.findFirst({
@@ -147,6 +149,7 @@ organizationsRouter.post("/:organizationId/invitations", requireAuth, asyncHandl
       tokenHash,
       organizationId,
       roleKeys: [input.roleKey],
+      instrument: input.roleKey === "MUSICIAN" ? input.instrument : undefined,
       invitedById: actor.id,
       expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
     },
@@ -160,8 +163,10 @@ organizationsRouter.post("/:organizationId/members", requireAuth, asyncHandler(a
   const organizationId = z.string().min(1).parse(req.params.organizationId);
   const input = z.object({
     email: z.string().email().transform((v) => v.toLowerCase().trim()),
-    roleKey: z.enum(["ORG_ADMIN", "EVENT_MANAGER", "MUSICIAN", "LIBRARIAN", "READ_ONLY"]).default("MUSICIAN")
+    roleKey: z.enum(["ORG_ADMIN", "EVENT_MANAGER", "MUSICIAN", "LIBRARIAN", "READ_ONLY"]).default("MUSICIAN"),
+    instrument: z.enum(["PERCUSSION", "PIANO", "HARP", "VIOLIN", "VIOLA", "CELLO", "DOUBLE_BASS", "FLUTE", "OBOE", "CLARINET", "BASSOON", "TRUMPET", "FRENCH_HORN", "TROMBONE", "TUBA"]).optional()
   }).parse(req.body);
+  if (input.roleKey === "MUSICIAN" && !input.instrument) { res.status(400).json({ error: "INSTRUMENT_REQUIRED", message: "Selecione o instrumento do músico." }); return; }
 
   const actor = req.currentUser!;
   if (!actor.isSuperAdmin) {
@@ -201,7 +206,7 @@ organizationsRouter.post("/:organizationId/members", requireAuth, asyncHandler(a
     if (!existing) {
       return tx.membership.create({
         data: {
-          userId: user.id, organizationId, status: "ACTIVE", joinedAt: new Date(),
+          userId: user.id, organizationId, status: "ACTIVE", joinedAt: new Date(), instrument: input.roleKey === "MUSICIAN" ? input.instrument : undefined,
           roles: { create: { roleId: role.id } }
         },
         include: { user: { select: { id: true, name: true, email: true } }, roles: { include: { role: true } } }
@@ -211,6 +216,7 @@ organizationsRouter.post("/:organizationId/members", requireAuth, asyncHandler(a
       where: { id: existing.id },
       data: {
         status: "ACTIVE",
+        instrument: input.roleKey === "MUSICIAN" ? input.instrument : undefined,
         roles: { connectOrCreate: {
           where: { membershipId_roleId: { membershipId: existing.id, roleId: role.id } },
           create: { roleId: role.id }
@@ -242,7 +248,8 @@ organizationsRouter.patch("/:organizationId/members/:membershipId", requireAuth,
   }
   const input = z.object({
     status: z.enum(["ACTIVE", "SUSPENDED", "LEFT"]).optional(),
-    roleKeys: z.array(z.string()).optional()
+    roleKeys: z.array(z.string()).optional(),
+    instrument: z.enum(["PERCUSSION", "PIANO", "HARP", "VIOLIN", "VIOLA", "CELLO", "DOUBLE_BASS", "FLUTE", "OBOE", "CLARINET", "BASSOON", "TRUMPET", "FRENCH_HORN", "TROMBONE", "TUBA"]).nullable().optional()
   }).parse(req.body);
   const target = await prisma.membership.findFirst({ where: { id: membershipId, organizationId } });
   if (!target) {
@@ -251,6 +258,7 @@ organizationsRouter.patch("/:organizationId/members/:membershipId", requireAuth,
   }
   const data: any = {};
   if (input.status) data.status = input.status;
+  if (input.instrument !== undefined) data.instrument = input.instrument;
   if (input.roleKeys) {
     const roles = await prisma.role.findMany({ where: { organizationId, key: { in: input.roleKeys } } });
     if (roles.length !== new Set(input.roleKeys).size) {
@@ -258,6 +266,8 @@ organizationsRouter.patch("/:organizationId/members/:membershipId", requireAuth,
       return;
     }
     data.roles = { deleteMany: {}, create: roles.map((role) => ({ roleId: role.id })) };
+    if (!input.roleKeys.includes("MUSICIAN")) data.instrument = null;
+    else if (input.instrument === undefined && !target.instrument) { res.status(400).json({ error: "INSTRUMENT_REQUIRED", message: "Defina o instrumento do músico." }); return; }
   }
   const updated = await prisma.membership.update({
     where: { id: membershipId },

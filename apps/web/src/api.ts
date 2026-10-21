@@ -32,12 +32,15 @@ export const api = {
   createOrganization: (body: { name: string; slug: string; timezone: string }) =>
     request<{ organization: Organization }>("/api/organizations", { method: "POST", body: JSON.stringify(body) }),
   events: (orgId: string) => request<{ events: Event[] }>(`/api/organizations/${orgId}/events`),
+  musicians: (orgId: string) => request<{ memberships: MusicianOption[] }>(`/api/organizations/${orgId}/musicians`),
   createEvent: (orgId: string, body: Record<string, unknown>) =>
     request<{ event: Event }>(`/api/organizations/${orgId}/events`, { method: "POST", body: JSON.stringify(body) }),
   updateEvent: (orgId: string, eventId: string, body: Record<string, unknown>) =>
     request<{ event: Event }>(`/api/organizations/${orgId}/events/${eventId}`, { method: "PATCH", body: JSON.stringify(body) }),
   deleteEvent: (orgId: string, eventId: string) =>
     request<void>(`/api/organizations/${orgId}/events/${eventId}`, { method: "DELETE" }),
+  updateEventLineup: (orgId: string, eventId: string, membershipIds: string[]) =>
+    request<{ musicians: EventMusician[] }>(`/api/organizations/${orgId}/events/${eventId}/lineup`, { method: "PUT", body: JSON.stringify({ membershipIds }) }),
   trips: (orgId: string) => request<{ trips: Trip[] }>(`/api/organizations/${orgId}/trips`),
   createTrip: (orgId: string, body: Record<string, unknown>) =>
     request<{ trip: Trip }>(`/api/organizations/${orgId}/trips`, { method: "POST", body: JSON.stringify(body) }),
@@ -51,10 +54,10 @@ export const api = {
     request<void>(`/api/organizations/${orgId}/trips/${tripId}/events/${eventId}`, { method: "DELETE" }),
   orderTripEvents: (orgId: string, tripId: string, eventIds: string[]) =>
     request(`/api/organizations/${orgId}/trips/${tripId}/events`, { method: "PATCH", body: JSON.stringify({ eventIds }) }),
-  createInvitation: (orgId: string, email: string, roleKey: string) =>
-    request<{ invitation: { id: string; email: string; expiresAt: string }; token: string; note: string }>(`/api/organizations/${encodeURIComponent(orgId)}/invitations`, { method: "POST", body: JSON.stringify({ email, roleKey }) }),
+  createInvitation: (orgId: string, email: string, roleKey: string, instrument?: string) =>
+    request<{ invitation: { id: string; email: string; expiresAt: string }; token: string; note: string }>(`/api/organizations/${encodeURIComponent(orgId)}/invitations`, { method: "POST", body: JSON.stringify({ email, roleKey, instrument }) }),
   members: (orgId: string) => request<{ memberships: Membership[]; invitations: Invitation[] }>(`/api/organizations/${orgId}/members`),
-  updateMember: (orgId: string, membershipId: string, body: { status?: string; roleKeys?: string[] }) =>
+  updateMember: (orgId: string, membershipId: string, body: { status?: string; roleKeys?: string[]; instrument?: string | null }) =>
     request(`/api/organizations/${orgId}/members/${membershipId}`, { method: "PATCH", body: JSON.stringify(body) }),
   documents: (orgId: string) => request<{ documents: Document[] }>(`/api/organizations/${orgId}/documents`),
   uploadDocument: (orgId: string, file: File, title: string, visibility: string) => request(`/api/organizations/${orgId}/documents?${new URLSearchParams({ title, visibility })}`, {
@@ -71,11 +74,15 @@ export type User = {
   memberships?: Array<{ organization: Organization; roles: Array<{ role: { key: string; name: string } }> }>;
 };
 export type Organization = { id: string; name: string; slug: string; timezone: string; status?: string; roles?: string[] };
+export const instruments = ["PERCUSSION", "PIANO", "HARP", "VIOLIN", "VIOLA", "CELLO", "DOUBLE_BASS", "FLUTE", "OBOE", "CLARINET", "BASSOON", "TRUMPET", "FRENCH_HORN", "TROMBONE", "TUBA"] as const;
+export type Instrument = typeof instruments[number];
+export type MusicianOption = { id: string; instrument?: Instrument | null; user: { id: string; name: string; email: string } };
+export type EventMusician = { id: string; membershipId: string; membership: MusicianOption };
 export type Event = {
   id: string; type: string; status: string; title: string; startAt: string; endAt: string; timezone?: string;
-  venue?: string | null; conductor?: string | null; program?: string | null;
+  venue?: string | null; conductor?: string | null; program?: string | null; musicians?: EventMusician[];
 };
 export type Trip = { id: string; title: string; startAt: string; endAt: string; status: string; eventLinks?: Array<{ event: Event }> };
-export type Membership = { id: string; status: string; user: { id: string; name: string; email: string }; roles: Array<{ role: { key: string; name: string } }> };
-export type Invitation = { id: string; email: string; roleKeys: string[]; expiresAt: string };
+export type Membership = { id: string; status: string; instrument?: Instrument | null; user: { id: string; name: string; email: string }; roles: Array<{ role: { key: string; name: string } }> };
+export type Invitation = { id: string; email: string; roleKeys: string[]; instrument?: Instrument | null; expiresAt: string };
 export type Document = { id: string; title: string; description?: string | null; fileName: string; mimeType: string; sizeBytes: string | number; visibility: string; createdAt: string; uploadedBy?: { name: string } };

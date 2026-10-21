@@ -44,6 +44,24 @@ enum TripStatus {
   CANCELLED
 }
 
+enum Instrument {
+  PERCUSSION
+  PIANO
+  HARP
+  VIOLIN
+  VIOLA
+  CELLO
+  DOUBLE_BASS
+  FLUTE
+  OBOE
+  CLARINET
+  BASSOON
+  TRUMPET
+  FRENCH_HORN
+  TROMBONE
+  TUBA
+}
+
 enum DocumentVisibility {
   ADMINS_ONLY
   STAFF
@@ -94,6 +112,7 @@ model Membership {
   userId         String
   organizationId String
   status         MembershipStatus @default(ACTIVE)
+  instrument     Instrument?
   joinedAt       DateTime         @default(now())
   createdAt      DateTime         @default(now())
   updatedAt      DateTime         @updatedAt
@@ -101,6 +120,7 @@ model Membership {
   user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   roles        MembershipRole[]
+  eventMusicians EventMusician[]
 
   @@unique([userId, organizationId])
   @@index([organizationId, status])
@@ -156,6 +176,7 @@ model Invitation {
   tokenHash      String   @unique
   organizationId String
   roleKeys       String[]
+  instrument     Instrument?
   invitedById    String
   expiresAt      DateTime
   acceptedAt     DateTime?
@@ -189,6 +210,7 @@ model Event {
   rehearsalDetails RehearsalDetails?
   concertDetails   ConcertDetails?
   tripLinks        TripEvent[]
+  musicians        EventMusician[]
   attachments      EventAttachment[]
 
   @@index([organizationId, startAt])
@@ -244,6 +266,20 @@ model TripEvent {
 
   @@unique([tripId, eventId])
   @@index([eventId])
+}
+
+model EventMusician {
+  id           String     @id @default(cuid()) @map("_id")
+  eventId      String
+  membershipId String
+  createdAt    DateTime   @default(now())
+
+  event      Event      @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  membership Membership @relation(fields: [membershipId], references: [id], onDelete: Cascade)
+
+  @@unique([eventId, membershipId])
+  @@index([eventId])
+  @@index([membershipId])
 }
 
 model TripStop {

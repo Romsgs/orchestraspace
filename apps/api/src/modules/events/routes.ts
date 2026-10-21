@@ -6,7 +6,7 @@ import { orgRoles, requireAuth } from "../../middleware/auth.js";
 
 export const eventsRouter = Router();
 
-const eventSchema = z.object({
+const eventObjectSchema = z.object({
   type: z.enum(["REHEARSAL", "GENERAL_REHEARSAL", "CONCERT", "SOUND_CHECK", "MEETING", "OTHER"]),
   status: z.enum(["DRAFT", "PUBLISHED", "CANCELLED", "COMPLETED"]).optional(),
   title: z.string().trim().min(2).max(200),
@@ -28,7 +28,8 @@ const eventSchema = z.object({
     setupAt: z.string().datetime().optional(),
     additionalNotes: z.string().max(5000).optional()
   }).optional()
-}).refine((v) => new Date(v.endAt) > new Date(v.startAt), {
+});
+const eventSchema = eventObjectSchema.refine((v) => new Date(v.endAt) > new Date(v.startAt), {
   message: "O término precisa ser posterior ao início.", path: ["endAt"]
 });
 
@@ -49,10 +50,33 @@ eventsRouter.get("/:organizationId/events", requireAuth, asyncHandler(async (req
   }
   const events = await prisma.event.findMany({
     where: { organizationId },
-    include: { rehearsalDetails: true, concertDetails: true },
+    include: {
+      rehearsalDetails: true,
+      concertDetails: true,
+      musicians: { include: { membership: { include: { user: { select: { id: true, name: true, email: true } } } } } }
+    },
     orderBy: { startAt: "asc" }
   });
   res.json({ events });
+}));
+
+eventsRouter.get("/:organizationId/musicians", requireAuth, asyncHandler(async (req, res) => {
+  const organizationId = z.string().min(1).parse(req.params.organizationId);
+  const allowed = await assertOrgAccess(req.currentUser!.id, req.currentUser!.isSuperAdmin, organizationId);
+  if (!allowed) {
+    res.status(403).json({ error: "ORG_ACCESS_DENIED" });
+    return;
+  }
+  const memberships = await prisma.membership.findMany({
+    where: {
+      organizationId,
+      status: "ACTIVE",
+      roles: { some: { role: { key: "MUSICIAN" } } }
+    },
+    select: { id: true, instrument: true, user: { select: { id: true, name: true, email: true } } },
+    orderBy: { user: { name: "asc" } }
+  });
+  res.json({ memberships });
 }));
 
 eventsRouter.post("/:organizationId/events", requireAuth, orgRoles("ORG_ADMIN", "EVENT_MANAGER"), asyncHandler(async (req, res) => {
@@ -95,7 +119,9 @@ eventsRouter.patch("/:organizationId/events/:eventId", requireAuth, orgRoles("OR
   const { organizationId, eventId } = z.object({
     organizationId: z.string().min(1), eventId: z.string().min(1)
   }).parse(req.params);
-  const input = eventSchema.partial().parse(req.body);
+  const input = eventObjectSchema.partial().refine((v) => !v.startAt || !v.endAt || new Date(v.endAt) > new Date(v.startAt), {
+    message: "O término precisa ser posterior ao início.", path: ["endAt"]
+  }).parse(req.body);
   const existing = await prisma.event.findFirst({ where: { id: eventId, organizationId } });
   if (!existing) {
     res.status(404).json({ error: "EVENT_NOT_FOUND" });
@@ -115,6 +141,52 @@ eventsRouter.patch("/:organizationId/events/:eventId", requireAuth, orgRoles("OR
     data: { actorId: req.currentUser!.id, organizationId, action: "event.updated", entityType: "Event", entityId: event.id }
   });
   res.json({ event });
+}));
+
+eventsRouter.put("/:organizationId/events/:eventId/lineup", requireAuth, orgRoles("ORG_ADMIN", "EVENT_MANAGER"), asyncHandler(async (req, res) => {
+  const { organizationId, eventId } = z.object({
+    organizationId: z.string().min(1), eventId: z.string().min(1)
+  }).parse(req.params);
+  const { membershipIds } = z.object({
+    membershipIds: z.array(z.string().min(1)).max(250)
+  }).parse(req.body);
+  const event = await prisma.event.findFirst({ where: { id: eventId, organizationId }, select: { id: true } });
+  if (!event) {
+    res.status(404).json({ error: "EVENT_NOT_FOUND" });
+    return;
+  }
+  if (new Set(membershipIds).size !== membershipIds.length) {
+    res.status(400).json({ error: "DUPLICATE_MUSICIANS", message: "Não repita músicos na escala." });
+    return;
+  }
+  const validMemberships = membershipIds.length ? await prisma.membership.findMany({
+    where: {
+      id: { in: membershipIds }, organizationId, status: "ACTIVE",
+      roles: { some: { role: { key: "MUSICIAN" } } }
+    },
+    select: { id: true }
+  }) : [];
+  if (validMemberships.length !== membershipIds.length) {
+    res.status(400).json({ error: "INVALID_MUSICIANS", message: "Selecione músicos ativos desta orquestra." });
+    return;
+  }
+  await prisma.$transaction(async (tx) => {
+    await tx.eventMusician.deleteMany({ where: { eventId } });
+    if (membershipIds.length) {
+      await tx.eventMusician.createMany({ data: membershipIds.map((membershipId) => ({ membershipId, eventId })) });
+    }
+    await tx.auditLog.create({
+      data: { actorId: req.currentUser!.id, organizationId, action: "event.lineup.updated", entityType: "Event", entityId: eventId }
+    });
+  });
+  const updated = await prisma.eventMusician.findMany({
+    where: { eventId },
+    include: {
+      membership: { include: { user: { select: { id: true, name: true, email: true } } } }
+    },
+    orderBy: { membership: { user: { name: "asc" } } }
+  });
+  res.json({ musicians: updated });
 }));
 
 eventsRouter.delete("/:organizationId/events/:eventId", requireAuth, orgRoles("ORG_ADMIN", "EVENT_MANAGER"), asyncHandler(async (req, res) => {

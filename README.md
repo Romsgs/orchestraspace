@@ -1,4 +1,4 @@
-# Orchestra Platform
+# Orchestra Space
 
 Plataforma multi-orquestra em TypeScript, Express, Prisma, MongoDB Atlas e React.
 
@@ -54,6 +54,18 @@ API: `http://localhost:3000`
 Health check: `http://localhost:3000/health`
 
 O comando de seed só cria o superusuário se o e-mail ainda não existir. Use uma senha longa e exclusiva.
+
+### Backup manual do MongoDB
+
+Instale o MongoDB Database Tools na máquina que tem acesso ao Atlas e confirme que `mongodump` está no `PATH`. Depois, na raiz do repositório, rode:
+
+```bash
+npm run make_mongo_backup
+```
+
+O comando lê `apps/api/.env`, usa `DATABASE_URL` e grava um arquivo compactado em `backups/mongodb/`. Os backups são ignorados pelo Git; o arquivo não é criptografado e contém dados pessoais, então guarde-o em disco protegido (por exemplo, com BitLocker) e mantenha uma cópia externa protegida. O script não faz upload nem substitui snapshots automáticos do Atlas.
+
+Faça um backup antes de sincronizar alterações do Prisma com o banco. Para confiar nele, ensaie também uma restauração em um banco de teste separado; criar o arquivo, por si só, não comprova que a restauração funcionará.
 
 ## 3. Configurar frontend
 
