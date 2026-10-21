@@ -1,4 +1,6 @@
-const base = import.meta.env.VITE_API_BASE_URL ?? "";
+// Normalize an optional absolute API base so a trailing slash cannot produce
+// URLs like https://api.example.com//api/...
+const base = (import.meta.env.VITE_API_BASE_URL ?? "").replace(/\/+$/, "");
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   let response: Response;

@@ -5,7 +5,7 @@
   "rewrites": [
     {
       "source": "/api/:path*",
-      "destination": "https://orchestra-platform-api.onrender.com/api/:path*"
+      "destination": "https://orchestraspace.onrender.com/api/:path*"
     }
   ]
 }
