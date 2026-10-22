@@ -2,6 +2,7 @@ import { Router } from "express";
 import { createHash, randomBytes } from "node:crypto";
 import { z } from "zod";
 import { prisma } from "../../lib/prisma.js";
+import { logger } from "../../lib/logger.js";
 import { asyncHandler } from "../../middleware/async-handler.js";
 import { requireAuth, requireSuperadmin, orgRoles } from "../../middleware/auth.js";
 
@@ -16,14 +17,35 @@ organizationsRouter.get("/:organizationId/members", requireAuth, asyncHandler(as
     const admin = await prisma.membership.findFirst({ where: { organizationId, userId: req.currentUser!.id, status: "ACTIVE", organization: { status: "ACTIVE" }, roles: { some: { role: { key: "ORG_ADMIN" } } } }, select: { id: true } });
     if (!admin) { res.status(403).json({ error: "FORBIDDEN" }); return; }
   }
-  const [memberships, invitations] = await Promise.all([
-    prisma.membership.findMany({ where: { organizationId }, include: { user: { select: { id: true, name: true, email: true } }, roles: { include: { role: { select: { key: true, name: true } } } } }, orderBy: { createdAt: "asc" } }),
-    prisma.invitation.findMany({ where: {
-      organizationId,
-      OR: [{ acceptedAt: null }, { acceptedAt: { isSet: false } }],
-      expiresAt: { gt: new Date() }
-    }, select: { id: true, email: true, roleKeys: true, instrument: true, expiresAt: true, createdAt: true }, orderBy: { createdAt: "desc" } })
-  ]);
+  let memberships;
+  let invitations;
+  try {
+    [memberships, invitations] = await Promise.all([
+      prisma.membership.findMany({ where: { organizationId }, include: { user: { select: { id: true, name: true, email: true } }, roles: { include: { role: { select: { key: true, name: true } } } } }, orderBy: { createdAt: "asc" } }),
+      prisma.invitation.findMany({ where: {
+        organizationId,
+        OR: [{ acceptedAt: null }, { acceptedAt: { isSet: false } }],
+        expiresAt: { gt: new Date() }
+      }, select: { id: true, email: true, roleKeys: true, instrument: true, expiresAt: true, createdAt: true }, orderBy: { createdAt: "desc" } })
+    ]);
+  } catch (error) {
+    try {
+      const membershipRefs = await prisma.membership.findMany({
+        where: { organizationId },
+        select: { id: true, userId: true }
+      });
+      const userIds = [...new Set(membershipRefs.map(({ userId }) => userId))];
+      const users = await prisma.user.findMany({ where: { id: { in: userIds } }, select: { id: true } });
+      const existingUserIds = new Set(users.map(({ id }) => id));
+      const orphanMemberships = membershipRefs
+        .filter(({ userId }) => !existingUserIds.has(userId))
+        .map(({ id, userId }) => ({ membershipId: id, userId }));
+      logger.error({ organizationId, orphanMembershipCount: orphanMemberships.length, orphanMemberships }, "Could not load organization members; checked for missing user records");
+    } catch (diagnosticError) {
+      logger.error({ organizationId, err: diagnosticError }, "Could not diagnose organization member query failure");
+    }
+    throw error;
+  }
   res.json({ memberships, invitations });
 }));
 

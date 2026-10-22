@@ -48,8 +48,19 @@ app.use(session({
   }
 }));
 
-app.use((req, _res, next) => {
-  logger.debug({ method: req.method, path: req.path }, "HTTP request");
+app.use((req, res, next) => {
+  const startedAt = Date.now();
+  res.on("finish", () => {
+    const fields = {
+      method: req.method,
+      path: req.path,
+      statusCode: res.statusCode,
+      durationMs: Date.now() - startedAt
+    };
+    if (res.statusCode >= 500) logger.error(fields, "HTTP request failed");
+    else if (res.statusCode >= 400) logger.warn(fields, "HTTP request rejected");
+    else logger.info(fields, "HTTP request completed");
+  });
   next();
 });
 
