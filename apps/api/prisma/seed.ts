@@ -11,8 +11,8 @@ async function main() {
   if (!email || !password || password === "CHANGE_ME_TO_A_LONG_UNIQUE_PASSWORD") {
     throw new Error("Configure BOOTSTRAP_ADMIN_EMAIL e uma BOOTSTRAP_ADMIN_PASSWORD forte em .env");
   }
-  if (password.length < 14) {
-    throw new Error("A senha inicial deve ter pelo menos 14 caracteres.");
+  if (password.length < 11) {
+    throw new Error("A senha inicial deve ter pelo menos 11 caracteres.");
   }
 
   const existing = await prisma.user.findUnique({ where: { email } });

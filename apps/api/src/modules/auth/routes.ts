@@ -16,7 +16,7 @@ authRouter.post("/accept-invitation", asyncHandler(async (req, res) => {
   const input = z.object({
     token: z.string().min(20).max(200),
     name: z.string().trim().min(2).max(120),
-    password: z.string().min(14).max(200).optional()
+    password: z.string().min(11).max(200).optional()
   }).parse(req.body);
   const tokenHash = createHash("sha256").update(input.token).digest("hex");
   const invitation = await prisma.invitation.findUnique({ where: { tokenHash } });
@@ -50,7 +50,7 @@ authRouter.post("/accept-invitation", asyncHandler(async (req, res) => {
     return;
   }
   if (!existing && !input.password) {
-    res.status(400).json({ error: "PASSWORD_REQUIRED", message: "Defina uma senha com pelo menos 14 caracteres." });
+    res.status(400).json({ error: "PASSWORD_REQUIRED", message: "Defina uma senha com pelo menos 11 caracteres." });
     return;
   }
   const organization = await prisma.organization.findFirst({ where: { id: invitation.organizationId, status: "ACTIVE" }, select: { id: true } });
