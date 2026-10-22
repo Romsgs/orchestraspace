@@ -109,6 +109,7 @@ export function App() {
   const [invitationToken, setInvitationToken] = useState(() => new URLSearchParams(window.location.search).get("invite") ?? "");
   const [acceptName, setAcceptName] = useState("");
   const [acceptPassword, setAcceptPassword] = useState("");
+  const [confirmAcceptPassword, setConfirmAcceptPassword] = useState("");
   const [tripEventSelection, setTripEventSelection] = useState<Record<string, string>>({});
   const [overview, setOverview] = useState<{users:number;organizations:number;events:number}|null>(null);
 
@@ -324,8 +325,12 @@ export function App() {
   async function acceptInvitation(e: FormEvent<HTMLFormElement>) {
     e.preventDefault(); setError("");
     if (acceptingInvitation) return;
+    if (!user && acceptPassword !== confirmAcceptPassword) {
+      setError(t("As senhas não coincidem."));
+      return;
+    }
     setAcceptingInvitation(true);
-    try { const result = await api.acceptInvitation(invitationToken, acceptName || user?.name || "Músico", acceptPassword || undefined); setNotice(result.message); setInvitationToken(""); setAcceptPassword(""); window.history.replaceState({}, "", window.location.pathname); await loadMe(); }
+    try { const result = await api.acceptInvitation(invitationToken, acceptName || user?.name || "Músico", acceptPassword || undefined); setNotice(result.message); setInvitationToken(""); setAcceptPassword(""); setConfirmAcceptPassword(""); window.history.replaceState({}, "", window.location.pathname); await loadMe(); }
     catch (err) { setError(err instanceof Error ? err.message : "Falha ao aceitar convite."); }
     finally { setAcceptingInvitation(false); }
   }
@@ -353,7 +358,7 @@ export function App() {
       <div className="art-note"><CalendarDays size={17}/> Planejamento musical, sem ruído.</div>
     </div>
     <section className="login-panel">
-      {invitationToken && <form className="login-card invite-card" onSubmit={acceptInvitation}><span className="eyebrow">CONVITE</span><h2>Aceitar convite</h2><p className="muted">Crie sua conta para entrar na orquestra.</p>{error && <div className="alert error">{error}</div>}<label>Seu nome<input value={acceptName} onChange={(e)=>setAcceptName(e.target.value)} required minLength={2}/></label><label>Senha nova<input type="password" value={acceptPassword} onChange={(e)=>setAcceptPassword(e.target.value)} minLength={14} required autoComplete="new-password"/></label><button className="primary full" disabled={acceptingInvitation}>Criar conta e aceitar</button></form>}
+      {invitationToken && <form className="login-card invite-card" onSubmit={acceptInvitation}><span className="eyebrow">CONVITE</span><h2>Aceitar convite</h2><p className="muted">Crie sua conta para entrar na orquestra.</p>{error && <div className="alert error">{error}</div>}<label>Seu nome<input value={acceptName} onChange={(e)=>setAcceptName(e.target.value)} required minLength={2}/></label><label>Senha nova<input type="password" value={acceptPassword} onChange={(e)=>setAcceptPassword(e.target.value)} minLength={14} required autoComplete="new-password"/></label><label>Confirme a senha<input type="password" value={confirmAcceptPassword} onChange={(e)=>setConfirmAcceptPassword(e.target.value)} minLength={14} required autoComplete="new-password"/></label><button className="primary full" disabled={acceptingInvitation}>Criar conta e aceitar</button></form>}
       <form className="login-card" onSubmit={submitLogin}>
         <span className="eyebrow">ÁREA RESTRITA</span><h2>Bem-vindo de volta</h2>
         <p className="muted">Entre com sua conta para acessar a plataforma.</p>
