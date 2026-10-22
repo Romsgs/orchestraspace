@@ -53,6 +53,13 @@ button, a, input, select, textarea { -webkit-tap-highlight-color: transparent; }
 .password-toggle { position: absolute; top: 0; right: 0; bottom: 0; width: 44px; display: grid; place-items: center; border: 0; border-radius: 9px; background: transparent; color: var(--muted); padding: 0; }
 .password-toggle:hover { color: var(--wine); background: #72000008; }
 .password-toggle:focus-visible { outline: 2px solid var(--wine); outline-offset: -3px; }
+.visually-hidden { position: absolute; width: 1px !important; height: 1px; padding: 0 !important; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.file-field { display: flex; flex-direction: column; gap: 8px; margin: 8px 0; }
+.form-grid .file-field > label, .form-grid .file-picker > label { margin: 0; }
+.file-picker { position: relative; display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
+.file-picker > label { cursor: pointer; }
+.file-picker > span { color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
+.file-picker:focus-within > label { outline: 2px solid var(--wine); outline-offset: 2px; }
 .primary, .secondary { min-height: 40px; border: 0; border-radius: 9px; padding: 10px 15px; display: inline-flex; justify-content: center; align-items: center; gap: 8px; font-weight: 700; font-size: 13px; text-decoration: none; transition: background .15s, transform .15s, box-shadow .15s; }
 .primary { color: white; background: var(--wine); box-shadow: 0 4px 10px #72000022; }
 .primary:hover { background: var(--wine-dark); transform: translateY(-1px); }

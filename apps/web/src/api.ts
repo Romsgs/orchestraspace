@@ -1,3 +1,5 @@
+import { apiErrorMessageKey } from "./i18n";
+
 // Normalize an optional absolute API base so a trailing slash cannot produce
 // URLs like https://api.example.com//api/...
 const base = (import.meta.env.VITE_API_BASE_URL ?? "").replace(/\/+$/, "");
@@ -15,13 +17,13 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     });
   } catch (error) {
     if (error instanceof TypeError) {
-      throw new Error("Não foi possível conectar ao servidor. No celular, abra o endereço publicado do site ou, em desenvolvimento, use o IP local do computador na mesma rede Wi-Fi.");
+      throw new Error("error.network");
     }
     throw error;
   }
   if (response.status === 204) return undefined as T;
   const payload = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(payload.message ?? payload.error ?? `HTTP ${response.status}`);
+  if (!response.ok) throw new Error(apiErrorMessageKey(response.status, payload));
   return payload as T;
 }
 

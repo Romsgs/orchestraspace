@@ -1,14 +1,14 @@
-import { cloneElement, FormEvent, isValidElement, ReactNode, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import { CalendarDays, ChevronDown, Crown, FileText, Filter, LogOut, MapPinned, Music2, Pencil, Plus, RefreshCw, ShieldCheck, Trash2, Users, X } from "lucide-react";
 import { api, Document as OrgDocument, Event, instruments, Invitation, Membership, MusicianOption, Organization, Trip, User } from "./api";
 import languages from "./languages.json";
+import { translate, validationMessageKey, type LanguageCode } from "./i18n";
 import { PasswordField } from "./PasswordField";
 
 type Tab = "agenda" | "trips" | "team" | "documents" | "system";
-type LanguageCode = keyof typeof languages;
 const languageCodes = Object.keys(languages) as LanguageCode[];
 
-function dateLabel(value: string, timezone = "Europe/Sofia", locale = "pt-BR") {
+function dateLabel(value: string, timezone = "Europe/Sofia", locale = "bg-BG") {
   return new Intl.DateTimeFormat(locale, {
     dateStyle: "medium", timeStyle: "short", timeZone: timezone
   }).format(new Date(value));
@@ -46,34 +46,25 @@ function dateTimeInputToIso(value: string, timezone: string) {
 export function App() {
   const [language, setLanguage] = useState<LanguageCode>(() => {
     const saved = typeof document !== "undefined" ? document.cookie.split("; ").find((row) => row.startsWith("language="))?.split("=")[1] : undefined;
-    return saved && Object.prototype.hasOwnProperty.call(languages, saved) ? saved as LanguageCode : "pt";
+    return saved && Object.prototype.hasOwnProperty.call(languages, saved) ? saved as LanguageCode : "bg";
   });
-  const t = (key: string, values: Record<string, string> = {}) => {
-    const activeTranslations = languages[language].translations as Record<string, string>;
-    const fallbackTranslations = languages.en.translations as Record<string, string>;
-    const sourceTranslations = languages.pt.translations as Record<string, string>;
-    const template = activeTranslations[key] ?? fallbackTranslations[key] ?? sourceTranslations[key] ?? key;
-    return template.replace(/\{(\w+)\}/g, (placeholder, name: string) => values[name] ?? placeholder);
-  };
+  const t = (key: string, values: Record<string, string> = {}) => translate(language, key, values);
   const localizedDate = (value: string, timezone = selectedOrg?.timezone ?? "Europe/Sofia") => dateLabel(value, timezone, languages[language].locale);
   const localizedTime = (value: string, timezone = selectedOrg?.timezone ?? "Europe/Sofia") => new Intl.DateTimeFormat(languages[language].locale, { timeStyle: "short", timeZone: timezone }).format(new Date(value));
-  const localizeTree = (node: ReactNode): ReactNode => {
-    if (typeof node === "string") {
-      const key = node.trim();
-      if (!key) return node;
-      const start = node.indexOf(key);
-      return `${node.slice(0, start)}${t(key)}${node.slice(start + key.length)}`;
+  useEffect(() => {
+    document.documentElement.lang = languages[language].locale;
+    document.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>("input, select, textarea").forEach((input) => input.setCustomValidity(""));
+  }, [language]);
+  const handleInvalid = (event: React.FormEvent<HTMLElement>) => {
+    const input = event.target;
+    if (input instanceof HTMLInputElement || input instanceof HTMLSelectElement || input instanceof HTMLTextAreaElement) {
+      input.setCustomValidity(t(validationMessageKey(input.validity)));
     }
-    if (Array.isArray(node)) return node.map(localizeTree);
-    if (!isValidElement<Record<string, unknown>>(node)) return node;
-    const props = { ...node.props };
-    if (props.children !== undefined) props.children = localizeTree(props.children as ReactNode);
-    for (const key of ["label", "title", "text", "placeholder", "aria-label", "aria-description", "alt"]) {
-      if (typeof props[key] === "string") props[key] = t(props[key] as string);
-    }
-    return cloneElement(node, props);
   };
-
+  const clearValidity = (event: React.FormEvent<HTMLElement>) => {
+    const input = event.target;
+    if (input instanceof HTMLInputElement || input instanceof HTMLSelectElement || input instanceof HTMLTextAreaElement) input.setCustomValidity("");
+  };
   const setAppLanguage = (newLang: LanguageCode) => {
     setLanguage(newLang);
     document.cookie = `language=${newLang}; path=/; max-age=31536000; SameSite=Lax`;
@@ -89,7 +80,7 @@ export function App() {
   const [busy, setBusy] = useState(false);
   const [acceptingInvitation, setAcceptingInvitation] = useState(false);
   const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
+  const [notice, setNotice] = useState<{ key: string; values?: Record<string, string> } | null>(null);
   const [loginEmail, setLoginEmail] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
   const [showOrgForm, setShowOrgForm] = useState(false);
@@ -105,6 +96,7 @@ export function App() {
   const [inviteRole, setInviteRole] = useState("MUSICIAN");
   const [members, setMembers] = useState<Membership[]>([]);
   const [invitations, setInvitations] = useState<Invitation[]>([]);
+  const [uploadFileName, setUploadFileName] = useState("");
   const [documents, setDocuments] = useState<OrgDocument[]>([]);
   const [inviteToken, setInviteToken] = useState("");
   const [invitationToken, setInvitationToken] = useState(() => new URLSearchParams(window.location.search).get("invite") ?? "");
@@ -224,14 +216,14 @@ export function App() {
   }
 
   async function submitOrganization(e: FormEvent<HTMLFormElement>) {
-    e.preventDefault(); setError(""); setNotice("");
+    e.preventDefault(); setError(""); setNotice(null);
     const data = new FormData(e.currentTarget);
     try {
       const result = await api.createOrganization({
         name: String(data.get("name")), slug: String(data.get("slug")).toLowerCase().trim().replace(/\s+/g, "-"),
         timezone: String(data.get("timezone") || "Europe/Sofia")
       });
-      setNotice(t('Orquestra "{name}" criada. Adicione os membros em Administração de membros.', { name: result.organization.name }));
+      setNotice({ key: 'Orquestra "{name}" criada. Adicione os membros em Administração de membros.', values: { name: result.organization.name } });
       setShowOrgForm(false);
       const orgs = await api.organizations();
       setOrganizations(orgs.organizations);
@@ -240,7 +232,7 @@ export function App() {
   }
 
   async function submitEvent(e: FormEvent<HTMLFormElement>) {
-    e.preventDefault(); setError(""); setNotice("");
+    e.preventDefault(); setError(""); setNotice(null);
     const data = new FormData(e.currentTarget);
     const start = new Date(String(data.get("startAt"))).toISOString();
     const end = new Date(String(data.get("endAt"))).toISOString();
@@ -258,7 +250,7 @@ export function App() {
           bringLights: data.get("bringLights") === "on"
         }} : {})
       });
-      setShowEventForm(false); setNotice("Evento criado e publicado."); await loadOrgData();
+      setShowEventForm(false); setNotice({ key: "Evento criado e publicado." }); await loadOrgData();
     } catch (err) { setError(err instanceof Error ? err.message : "Falha ao criar evento."); }
   }
 
@@ -275,7 +267,7 @@ export function App() {
         program: String(data.get("program") ?? "")
       });
       await api.updateEventLineup(orgId, event.id, lineupDraft);
-      setEditingEventId(""); setNotice(t("Evento atualizado.")); await loadOrgData();
+      setEditingEventId(""); setNotice({ key: "Evento atualizado." }); await loadOrgData();
     } catch (err) { setError(err instanceof Error ? err.message : "Falha ao atualizar evento."); }
   }
 
@@ -286,12 +278,12 @@ export function App() {
     try {
       await api.deleteEvent(orgId, event.id);
       if (editingEventId === event.id) setEditingEventId("");
-      setNotice(t("Evento excluído.")); await loadOrgData();
+      setNotice({ key: "Evento excluído." }); await loadOrgData();
     } catch (err) { setError(err instanceof Error ? err.message : "Falha ao excluir evento."); }
   }
 
   async function submitTrip(e: FormEvent<HTMLFormElement>) {
-    e.preventDefault(); setError(""); setNotice("");
+    e.preventDefault(); setError(""); setNotice(null);
     const data = new FormData(e.currentTarget);
     try {
       await api.createTrip(orgId, {
@@ -300,13 +292,13 @@ export function App() {
         endAt: new Date(String(data.get("endAt"))).toISOString(),
         timezone: selectedOrg?.timezone ?? "Europe/Sofia"
       });
-      setShowTripForm(false); setNotice("Viagem criada. Agora você pode associar eventos existentes."); await loadOrgData();
+      setShowTripForm(false); setNotice({ key: "Viagem criada. Agora você pode associar eventos existentes." }); await loadOrgData();
     } catch (err) { setError(err instanceof Error ? err.message : "Falha ao criar viagem."); }
   }
 
   async function submitInvitation(e: FormEvent<HTMLFormElement>) {
     e.preventDefault(); setError(""); setInviteToken("");
-    if (!orgId) { setError(t("Selecione uma orquestra")); return; }
+    if (!orgId) { setError("Selecione uma orquestra"); return; }
     const form = e.currentTarget;
     const data = new FormData(form);
     try {
@@ -317,10 +309,11 @@ export function App() {
   }
 
   async function submitDocument(e: FormEvent<HTMLFormElement>) {
-    e.preventDefault(); setError(""); setNotice("");
-    const data = new FormData(e.currentTarget); const file = data.get("file");
+    e.preventDefault(); setError(""); setNotice(null);
+    const form = e.currentTarget;
+    const data = new FormData(form); const file = data.get("file");
     if (!(file instanceof File) || file.size === 0) { setError("Selecione um arquivo."); return; }
-    try { await api.uploadDocument(orgId, file, String(data.get("title") || file.name), String(data.get("visibility"))); e.currentTarget.reset(); setNotice("Documento enviado."); await loadDocuments(); }
+    try { await api.uploadDocument(orgId, file, String(data.get("title") || file.name), String(data.get("visibility"))); form.reset(); setUploadFileName(""); setNotice({ key: "Documento enviado." }); await loadDocuments(); }
     catch (err) { setError(err instanceof Error ? err.message : "Falha ao enviar documento."); }
   }
 
@@ -328,11 +321,11 @@ export function App() {
     e.preventDefault(); setError("");
     if (acceptingInvitation) return;
     if (!user && acceptPassword !== confirmAcceptPassword) {
-      setError(t("As senhas não coincidem."));
+      setError("As senhas não coincidem.");
       return;
     }
     setAcceptingInvitation(true);
-    try { const result = await api.acceptInvitation(invitationToken, acceptName || user?.name || "Músico", acceptPassword || undefined); setNotice(result.message); setInvitationToken(""); setAcceptPassword(""); setConfirmAcceptPassword(""); window.history.replaceState({}, "", window.location.pathname); await loadMe(); }
+    try { await api.acceptInvitation(invitationToken, acceptName || user?.name || "Músico", acceptPassword || undefined); setNotice({ key: "Convite aceito e vínculo ativado. Faça login para continuar." }); setInvitationToken(""); setAcceptPassword(""); setConfirmAcceptPassword(""); window.history.replaceState({}, "", window.location.pathname); await loadMe(); }
     catch (err) { setError(err instanceof Error ? err.message : "Falha ao aceitar convite."); }
     finally { setAcceptingInvitation(false); }
   }
@@ -348,35 +341,36 @@ export function App() {
     catch (err) { setError(err instanceof Error ? err.message : "Falha ao atualizar o estado da viagem."); }
   }
 
-  if (!user) return localizeTree(<main className="login-screen">
+  if (!user) return (<main className="login-screen" onInvalidCapture={handleInvalid} onInputCapture={clearValidity} onChangeCapture={clearValidity}>
     <label className="language-picker login-language" aria-label={t("Idioma")}><span className="language-current"><span className="language-flag">{languages[language].flag}</span><span className="language-name">{languages[language].name}</span></span><select aria-label={t("Idioma")} value={language} onChange={(e) => setAppLanguage(e.target.value as LanguageCode)}>{languageCodes.map((code) => <option key={code} value={code}>{languages[code].flag} {languages[code].name}</option>)}</select><ChevronDown size={14}/></label>
     <div className="login-art">
       <div className="brand"><div className="brand-mark"><Music2 size={22}/></div><span>Orchestra<span className="brand-light"> Space</span></span></div>
       <div className="hero-copy">
-        <span className="eyebrow">ORCHESTRA OPERATIONS</span>
-        <h1>Uma agenda.<br/><em>Toda a orquestra.</em></h1>
-        <p>Ensaios, concertos, turnês e documentos em um só lugar.</p>
+        <span className="eyebrow">{t("ORCHESTRA OPERATIONS")}</span>
+        <h1>{t("Uma agenda.")}<br/><em>{t("Toda a orquestra.")}</em></h1>
+        <p>{t("Ensaios, concertos, turnês e documentos em um só lugar.")}</p>
       </div>
-      <div className="art-note"><CalendarDays size={17}/> Planejamento musical, sem ruído.</div>
+      <div className="art-note"><CalendarDays size={17}/> {t("Planejamento musical, sem ruído.")}</div>
     </div>
     <section className="login-panel">
-      {invitationToken && <form className="login-card invite-card" onSubmit={acceptInvitation}><span className="eyebrow">CONVITE</span><h2>Aceitar convite</h2><p className="muted">Crie sua conta para entrar na orquestra.</p>{error && <div className="alert error">{error}</div>}<label>Seu nome<input value={acceptName} onChange={(e)=>setAcceptName(e.target.value)} required minLength={2}/></label><PasswordField label="Senha nova" showLabel={t("Mostrar senha")} hideLabel={t("Ocultar senha")} value={acceptPassword} onChange={(e)=>setAcceptPassword(e.target.value)} minLength={11} required autoComplete="new-password"/><PasswordField label="Confirme a senha" showLabel={t("Mostrar senha")} hideLabel={t("Ocultar senha")} value={confirmAcceptPassword} onChange={(e)=>setConfirmAcceptPassword(e.target.value)} minLength={11} required autoComplete="new-password"/><button className="primary full" disabled={acceptingInvitation}>Criar conta e aceitar</button></form>}
+      {notice && <div className="alert success" role="status">{t(notice.key, notice.values)}</div>}
+      {invitationToken && <form className="login-card invite-card" onSubmit={acceptInvitation}><span className="eyebrow">{t("CONVITE")}</span><h2>{t("Aceitar convite")}</h2><p className="muted">{t("Crie sua conta para entrar na orquestra.")}</p>{error && <div className="alert error">{t(error)}</div>}<label>{t("Seu nome")}<input value={acceptName} onChange={(e)=>setAcceptName(e.target.value)} required minLength={2}/></label><PasswordField label={t("Senha nova")} showLabel={t("Mostrar senha")} hideLabel={t("Ocultar senha")} value={acceptPassword} onChange={(e)=>setAcceptPassword(e.target.value)} minLength={11} required autoComplete="new-password"/><PasswordField label={t("Confirme a senha")} showLabel={t("Mostrar senha")} hideLabel={t("Ocultar senha")} value={confirmAcceptPassword} onChange={(e)=>setConfirmAcceptPassword(e.target.value)} minLength={11} required autoComplete="new-password"/><button className="primary full" disabled={acceptingInvitation}>{t("Criar conta e aceitar")}</button></form>}
       <form className="login-card" onSubmit={submitLogin}>
-        <span className="eyebrow">ÁREA RESTRITA</span><h2>Bem-vindo de volta</h2>
-        <p className="muted">Entre com sua conta para acessar a plataforma.</p>
-        {error && <div className="alert error">{error}</div>}
-        <label>E-mail<input type="email" autoComplete="username" required value={loginEmail} onChange={(e)=>setLoginEmail(e.target.value)} placeholder="voce@orquestra.org"/></label>
-        <PasswordField label="Senha" showLabel={t("Mostrar senha")} hideLabel={t("Ocultar senha")} autoComplete="current-password" required value={loginPassword} onChange={(e)=>setLoginPassword(e.target.value)} placeholder="Sua senha"/>
-        <button className="primary full" disabled={busy}>{busy ? "Entrando..." : "Entrar"} <span>→</span></button>
-        <p className="login-foot">Acesso criado pelo administrador da plataforma.</p>
+        <span className="eyebrow">{t("ÁREA RESTRITA")}</span><h2>{t("Bem-vindo de volta")}</h2>
+        <p className="muted">{t("Entre com sua conta para acessar a plataforma.")}</p>
+        {error && <div className="alert error">{t(error)}</div>}
+        <label>{t("E-mail")}<input type="email" autoComplete="username" required value={loginEmail} onChange={(e)=>setLoginEmail(e.target.value)} placeholder={t("Exemplo de e-mail")}/></label>
+        <PasswordField label={t("Senha")} showLabel={t("Mostrar senha")} hideLabel={t("Ocultar senha")} autoComplete="current-password" required value={loginPassword} onChange={(e)=>setLoginPassword(e.target.value)} placeholder={t("Sua senha")}/>
+        <button className="primary full" disabled={busy}>{busy ? t("Entrando...") : t("Entrar")} <span>→</span></button>
+        <p className="login-foot">{t("Acesso criado pelo administrador da plataforma.")}</p>
       </form>
     </section>
   </main>);
 
-  return localizeTree(<div className="app-shell">
+  return (<div className="app-shell" onInvalidCapture={handleInvalid} onInputCapture={clearValidity} onChangeCapture={clearValidity}>
     <aside className="sidebar">
       <div className="brand"><div className="brand-mark"><Music2 size={21}/></div><span>Orchestra<span className="brand-light"> Space</span></span></div>
-      <div className="side-caption">WORKSPACE</div>
+      <div className="side-caption">{t("WORKSPACE")}</div>
       <label className="org-picker"><span>{t("Instituição ativa")}</span><select value={orgId} onChange={(e)=>{const nextOrgId=e.target.value;setOrgId(nextOrgId);if(!nextOrgId&&tab==="team")setTab("agenda");}}><option value="">{t("Selecione uma orquestra")}</option>{organizations.map((o)=><option key={o.id} value={o.id}>{o.name}</option>)}</select><ChevronDown size={14}/></label>
       <nav>
         <button className={tab==="agenda"?"nav-item active":"nav-item"} onClick={()=>setTab("agenda")}><CalendarDays size={18}/> {t("Agenda")}</button>
@@ -387,82 +381,82 @@ export function App() {
       </nav>
       <div className="sidebar-bottom">
         <div className="secure-note"><ShieldCheck size={17}/><span><strong>{t("Área protegida")}</strong><small>{t("Permissões por instituição")}</small></span></div>
-        <button className="profile" onClick={logout}><div className="avatar">{user.name.slice(0,1).toUpperCase()}</div><span><strong>{user.name}</strong><small>{user.isSuperAdmin ? "Superusuário" : user.email}</small></span><LogOut size={16}/></button>
+        <button className="profile" onClick={logout}><div className="avatar">{user.name.slice(0,1).toUpperCase()}</div><span><strong>{user.name}</strong><small>{user.isSuperAdmin ? t("Superusuário") : user.email}</small></span><LogOut size={16}/></button>
       </div>
     </aside>
 
     <main className="main-content">
 <header className="topbar">
   <div className="breadcrumb">{t("PLATAFORMA")} / {tab==="system"?t("SISTEMA"):selectedOrg?.name?.toUpperCase() ?? t("SELECIONE UMA ORQUESTRA")}</div>
-  <h1>{(tab==="agenda"?"Agenda":tab==="trips"?"Viagens e turnês":tab==="team"?"Equipe":tab==="documents"?"Documentos":"Administração global")}</h1>
+  <h1>{(tab==="agenda"?t("Agenda"):tab==="trips"?t("Viagens e turnês"):tab==="team"?t("Equipe"):tab==="documents"?t("Documentos"):t("Administração global"))}</h1>
   <div className="top-actions">
-    <span className="status-dot">● Conectado</span>
+    <span className="status-dot">{t("● Conectado")}</span>
     <label className="language-picker" aria-label={t("Idioma")}><span className="language-current"><span className="language-flag">{languages[language].flag}</span><span className="language-name">{languages[language].name}</span></span><select aria-label={t("Idioma")} value={language} onChange={(e) => setAppLanguage(e.target.value as LanguageCode)}>{languageCodes.map((code) => <option key={code} value={code}>{languages[code].flag} {languages[code].name}</option>)}</select><ChevronDown size={14}/></label>
-    <button className="icon-button" title="Atualizar" onClick={()=>void loadOrgData()}><RefreshCw size={17}/></button>
+    <button className="icon-button" title={t("Atualizar")} onClick={()=>void loadOrgData()}><RefreshCw size={17}/></button>
     <div className="avatar">{user.name.slice(0,1).toUpperCase()}</div>
   </div>
 </header>
 
-      {error && <div className="alert error">{error}<button onClick={()=>setError("")}>×</button></div>}
-      {notice && <div className="alert success">{notice}<button onClick={()=>setNotice("")}>×</button></div>}
-      {invitationToken && <form className="panel form-grid" onSubmit={acceptInvitation}><h3>Aceitar convite para outra orquestra</h3><label>Confirme seu nome<input value={acceptName || user.name} onChange={(e)=>setAcceptName(e.target.value)} required minLength={2}/></label><PasswordField label="Senha atual da conta" showLabel={t("Mostrar senha")} hideLabel={t("Ocultar senha")} value={acceptPassword} onChange={(e)=>setAcceptPassword(e.target.value)} required autoComplete="current-password"/><div className="form-actions"><button className="primary" disabled={acceptingInvitation}>Aceitar convite</button></div></form>}
+      {error && <div className="alert error">{t(error)}<button type="button" aria-label={t("Fechar mensagem")} onClick={()=>setError("")}>×</button></div>}
+      {notice && <div className="alert success">{t(notice.key, notice.values)}<button type="button" aria-label={t("Fechar mensagem")} onClick={()=>setNotice(null)}>×</button></div>}
+      {invitationToken && <form className="panel form-grid" onSubmit={acceptInvitation}><h3>{t("Aceitar convite para outra orquestra")}</h3><label>{t("Confirme seu nome")}<input value={acceptName || user.name} onChange={(e)=>setAcceptName(e.target.value)} required minLength={2}/></label><PasswordField label={t("Senha atual da conta")} showLabel={t("Mostrar senha")} hideLabel={t("Ocultar senha")} value={acceptPassword} onChange={(e)=>setAcceptPassword(e.target.value)} required autoComplete="current-password"/><div className="form-actions"><button className="primary" disabled={acceptingInvitation}>{t("Aceitar convite")}</button></div></form>}
 
       {tab==="system" && user.isSuperAdmin ? <section>
-        <div className="welcome-row"><div><h2>O centro de comando</h2><p className="muted">Visão geral das instituições e da atividade da plataforma.</p></div><button className="primary" onClick={()=>setShowOrgForm(!showOrgForm)}><Plus size={17}/> Nova orquestra</button></div>
+        <div className="welcome-row"><div><h2>{t("O centro de comando")}</h2><p className="muted">{t("Visão geral das instituições e da atividade da plataforma.")}</p></div><button className="primary" onClick={()=>setShowOrgForm(!showOrgForm)}><Plus size={17}/> {t("Nova orquestra")}</button></div>
         <div className="stats-grid">
-          <Stat icon={<Users/>} label="Usuários" value={overview?.users ?? "—"}/>
-          <Stat icon={<Music2/>} label="Orquestras" value={overview?.organizations ?? "—"}/>
-          <Stat icon={<CalendarDays/>} label="Eventos" value={overview?.events ?? "—"}/>
+          <Stat icon={<Users/>} label={t("Usuários")} value={overview?.users ?? "—"}/>
+          <Stat icon={<Music2/>} label={t("Orquestras")} value={overview?.organizations ?? "—"}/>
+          <Stat icon={<CalendarDays/>} label={t("Eventos")} value={overview?.events ?? "—"}/>
         </div>
-        {showOrgForm && <form className="panel form-grid" onSubmit={submitOrganization}><h3>Nova instituição</h3><label>Nome<input name="name" required minLength={2}/></label><label>Slug (URL)<input name="slug" required pattern="[a-zA-Z0-9]+(?:-[a-zA-Z0-9]+)*" placeholder="sinfonietta-vidin"/></label><label>Fuso horário<input name="timezone" defaultValue="Europe/Sofia" required/></label><div className="form-actions"><button type="button" className="secondary" onClick={()=>setShowOrgForm(false)}>Cancelar</button><button className="primary">Criar instituição</button></div></form>}
-        <div className="panel"><div className="panel-heading"><div><h3>Instituições</h3><p className="muted">Organizações cadastradas na plataforma.</p></div><span className="count">{organizations.length}</span></div>
-          {organizations.length===0 ? <Empty title="Nenhuma orquestra cadastrada" text="Crie a primeira instituição para começar."/> : <div className="org-list">{organizations.map((org)=><button key={org.id} className="org-row" onClick={()=>{setOrgId(org.id);setTab("agenda")}}><div className="org-symbol"><Music2/></div><span><strong>{org.name}</strong><small>/{org.slug} · {org.timezone}</small></span><span className="pill green">{t(org.status ?? "ACTIVE")}</span><span>→</span></button>)}</div>}
+        {showOrgForm && <form className="panel form-grid" onSubmit={submitOrganization}><h3>{t("Nova instituição")}</h3><label>{t("Nome")}<input name="name" required minLength={2}/></label><label>{t("Slug (URL)")}<input name="slug" required pattern="[a-zA-Z0-9]+(?:-[a-zA-Z0-9]+)*" placeholder="sinfonietta-vidin"/></label><label>{t("Fuso horário")}<input name="timezone" defaultValue="Europe/Sofia" required/></label><div className="form-actions"><button type="button" className="secondary" onClick={()=>setShowOrgForm(false)}>{t("Cancelar")}</button><button className="primary">{t("Criar instituição")}</button></div></form>}
+        <div className="panel"><div className="panel-heading"><div><h3>{t("Instituições")}</h3><p className="muted">{t("Organizações cadastradas na plataforma.")}</p></div><span className="count">{organizations.length}</span></div>
+          {organizations.length===0 ? <Empty title={t("Nenhuma orquestra cadastrada")} text={t("Crie a primeira instituição para começar.")}/> : <div className="org-list">{organizations.map((org)=><button key={org.id} className="org-row" onClick={()=>{setOrgId(org.id);setTab("agenda")}}><div className="org-symbol"><Music2/></div><span><strong>{org.name}</strong><small>/{org.slug} · {org.timezone}</small></span><span className="pill green">{t(org.status ?? "ACTIVE")}</span><span>→</span></button>)}</div>}
         </div>
       </section> : tab==="agenda" ? <section>
-        <div className="welcome-row"><div><h2>{selectedOrg ? t("Olá, {name}", { name: user.name.split(" ")[0] }) : "Escolha sua orquestra"}</h2><p className="muted">{selectedOrg ? "Aqui está a programação da instituição." : "Selecione uma instituição no menu lateral para visualizar a agenda."}</p></div>{canManage && orgId && <button className="primary" onClick={()=>setShowEventForm(!showEventForm)}><Plus size={17}/> Novo evento</button>}</div>
-        {orgId && <div className="stats-grid compact"><Stat icon={<CalendarDays/>} label="Eventos" value={events.length}/><Stat icon={<MapPinned/>} label="Viagens" value={trips.length}/><Stat icon={<Users/>} label="Instituição" value={selectedOrg?.name ?? "—"}/></div>}
-        {showEventForm && <form className="panel form-grid" onSubmit={submitEvent}><h3>Novo evento</h3>
-          <label>Título<input name="title" required minLength={2} placeholder="Ensaio de naipe / Concerto"/></label>
-          <label>Tipo<select name="type" defaultValue="REHEARSAL"><option value="REHEARSAL">Ensaio</option><option value="GENERAL_REHEARSAL">Ensaio geral</option><option value="CONCERT">Concerto</option><option value="SOUND_CHECK">Passagem de som</option><option value="MEETING">Reunião</option><option value="OTHER">Outro</option></select></label>
-          <label>Início<input type="datetime-local" name="startAt" required/></label><label>Término<input type="datetime-local" name="endAt" required/></label>
-          <label>Local<input name="venue" placeholder="Sala / auditório"/></label><label>Regente<input name="conductor" placeholder="Nome do regente"/></label>
-          <label className="wide">Programa<textarea name="program" rows={2} placeholder="Obras, compositores e observações do programa"/></label>
-          <label className="wide">Roupa (concertos)<input name="clothing" placeholder="Ex.: traje preto"/></label>
-          <label className="check-label"><input type="checkbox" name="bringStand"/> Levar estante</label><label className="check-label"><input type="checkbox" name="bringLights"/> Levar lâmpada</label>
-          <div className="form-actions"><button type="button" className="secondary" onClick={()=>setShowEventForm(false)}>Cancelar</button><button className="primary">Salvar evento</button></div>
+        <div className="welcome-row"><div><h2>{selectedOrg ? t("Olá, {name}", { name: user.name.split(" ")[0] }) : t("Escolha sua orquestra")}</h2><p className="muted">{selectedOrg ? t("Aqui está a programação da instituição.") : t("Selecione uma instituição no menu lateral para visualizar a agenda.")}</p></div>{canManage && orgId && <button className="primary" onClick={()=>setShowEventForm(!showEventForm)}><Plus size={17}/> {t("Novo evento")}</button>}</div>
+        {orgId && <div className="stats-grid compact"><Stat icon={<CalendarDays/>} label={t("Eventos")} value={events.length}/><Stat icon={<MapPinned/>} label={t("Viagens")} value={trips.length}/><Stat icon={<Users/>} label={t("Instituição")} value={selectedOrg?.name ?? "—"}/></div>}
+        {showEventForm && <form className="panel form-grid" onSubmit={submitEvent}><h3>{t("Novo evento")}</h3>
+          <label>{t("Título")}<input name="title" required minLength={2} placeholder={t("Ensaio de naipe / Concerto")}/></label>
+          <label>{t("Tipo")}<select name="type" defaultValue="REHEARSAL"><option value="REHEARSAL">{t("Ensaio")}</option><option value="GENERAL_REHEARSAL">{t("Ensaio geral")}</option><option value="CONCERT">{t("Concerto")}</option><option value="SOUND_CHECK">{t("Passagem de som")}</option><option value="MEETING">{t("Reunião")}</option><option value="OTHER">{t("Outro")}</option></select></label>
+          <label>{t("Início")}<input type="datetime-local" name="startAt" required/></label><label>{t("Término")}<input type="datetime-local" name="endAt" required/></label>
+          <label>{t("Local")}<input name="venue" placeholder={t("Sala / auditório")}/></label><label>{t("Regente")}<input name="conductor" placeholder={t("Nome do regente")}/></label>
+          <label className="wide">{t("Programa")}<textarea name="program" rows={2} placeholder={t("Obras, compositores e observações do programa")}/></label>
+          <label className="wide">{t("Roupa (concertos)")}<input name="clothing" placeholder={t("Ex.: traje preto")}/></label>
+          <label className="check-label"><input type="checkbox" name="bringStand"/> {t("Levar estante")}</label><label className="check-label"><input type="checkbox" name="bringLights"/> {t("Levar lâmpada")}</label>
+          <div className="form-actions"><button type="button" className="secondary" onClick={()=>setShowEventForm(false)}>{t("Cancelar")}</button><button className="primary">{t("Salvar evento")}</button></div>
         </form>}
-        {!orgId ? <Empty title="Nenhuma instituição selecionada" text="Escolha uma orquestra no seletor à esquerda."/> :
-          <div className="panel"><div className="panel-heading"><div><h3>Agenda</h3><p className="muted">Viagens e eventos em ordem cronológica.</p></div><button className="secondary" onClick={()=>setShowAgendaDateFilter((visible)=>!visible)}><Filter size={15}/>{showAgendaDateFilter?t("Ocultar filtro"):t("Filtrar por data")}</button>{showAgendaDateFilter&&<label className="agenda-date-filter">{t("A partir de")}<input aria-label={t("Filtrar agenda a partir da data")} type="date" value={agendaFromDate} onChange={(e)=>setAgendaFromDate(e.target.value)}/></label>}<span className="count">{agendaItems.length}</span></div>
-            {busy ? <p className="muted loading">Carregando agenda…</p> : agendaItems.length===0 ? <Empty title="Agenda vazia" text="Quando eventos ou viagens forem cadastrados, aparecerão aqui."/> :
+        {!orgId ? <Empty title={t("Nenhuma instituição selecionada")} text={t("Escolha uma orquestra no seletor à esquerda.")}/> :
+          <div className="panel"><div className="panel-heading"><div><h3>{t("Agenda")}</h3><p className="muted">{t("Viagens e eventos em ordem cronológica.")}</p></div><button className="secondary" onClick={()=>setShowAgendaDateFilter((visible)=>!visible)}><Filter size={15}/>{showAgendaDateFilter?t("Ocultar filtro"):t("Filtrar por data")}</button>{showAgendaDateFilter&&<label className="agenda-date-filter">{t("A partir de")}<input aria-label={t("Filtrar agenda a partir da data")} type="date" value={agendaFromDate} onChange={(e)=>setAgendaFromDate(e.target.value)}/></label>}<span className="count">{agendaItems.length}</span></div>
+            {busy ? <p className="muted loading">{t("Carregando agenda…")}</p> : agendaItems.length===0 ? <Empty title={t("Agenda vazia")} text={t("Quando eventos ou viagens forem cadastrados, aparecerão aqui.")}/> :
               <div className="agenda-list">{agendaItems.map((item) => item.kind === "trip" ? <article className="agenda-trip-card" key={`trip-${item.id}`}>
                 <div className="agenda-trip-heading"><div className="trip-card-icon"><MapPinned/></div><div><h3>{item.trip.title}</h3><p>{localizedDate(item.trip.startAt)} – {localizedDate(item.trip.endAt)}</p></div><span className="pill neutral">{t(item.trip.status)}</span>{canManage&&["PLANNING","CONFIRMED"].includes(item.trip.status)&&<button className="secondary trip-status-button" onClick={()=>void toggleTripConfirmation(item.trip)}>{t(item.trip.status==="PLANNING"?"Confirmar viagem":"Reabrir planejamento")}</button>}</div>
-                <div className="agenda-trip-events">{item.trip.eventLinks?.filter((link) => new Date(link.event.startAt) >= agendaCutoff).length ? item.trip.eventLinks.filter((link) => new Date(link.event.startAt) >= agendaCutoff).map((link) => renderAgendaEvent(link.event)) : <p className="muted">Nenhum evento associado a partir desta data.</p>}</div>
+                <div className="agenda-trip-events">{item.trip.eventLinks?.filter((link) => new Date(link.event.startAt) >= agendaCutoff).length ? item.trip.eventLinks.filter((link) => new Date(link.event.startAt) >= agendaCutoff).map((link) => renderAgendaEvent(link.event)) : <p className="muted">{t("Nenhum evento associado a partir desta data.")}</p>}</div>
               </article> : renderAgendaEvent(item.event))}</div>}
           </div>}
       </section> : <section>
         <div className="welcome-row"><div><h2>{t("Viagens e turnês")}</h2><p className="muted">{t("Agrupe eventos existentes em itinerários sem duplicá-los.")}</p></div>{canManage && orgId && <button className="primary" onClick={()=>setShowTripForm(!showTripForm)}><Plus size={17}/> {t("Nova viagem")}</button>}</div>
-        {showTripForm && <form className="panel form-grid" onSubmit={submitTrip}><h3>Nova viagem / turnê</h3><label className="wide">Nome<input name="title" required placeholder="Turnê de outono"/></label><label>Início<input name="startAt" type="datetime-local" required/></label><label>Término<input name="endAt" type="datetime-local" required/></label><label className="wide">Descrição<textarea name="description" rows={2} placeholder="Objetivo e notas da viagem"/></label><div className="form-actions"><button type="button" className="secondary" onClick={()=>setShowTripForm(false)}>Cancelar</button><button className="primary">Criar viagem</button></div></form>}
-        {!orgId ? <Empty title="Selecione uma orquestra" text="As viagens são separadas por instituição."/> : trips.length===0 ? <div className="panel"><Empty title="Nenhuma viagem cadastrada" text="Crie uma viagem e depois associe os eventos existentes."/></div> :
-          <div className="trip-grid">{trips.map((trip)=><article className="trip-card" key={trip.id}><div className="trip-card-icon"><MapPinned/></div><span className="pill neutral">{t(trip.status)}</span><h3>{trip.title}</h3><p>{localizedDate(trip.startAt)} – {localizedDate(trip.endAt)}</p>{canManage&&["PLANNING","CONFIRMED"].includes(trip.status)&&<button className="secondary trip-status-button" onClick={()=>void toggleTripConfirmation(trip)}>{t(trip.status==="PLANNING"?"Confirmar viagem":"Reabrir planejamento")}</button>}<div className="trip-events"><strong>{trip.eventLinks?.length ?? 0} {t("eventos vinculados")}</strong>{trip.eventLinks?.map((link,index)=>{const ids=trip.eventLinks?.map((item)=>item.event.id)??[];return <div className="trip-event-link" key={link.event.id}><span>{index+1}. {link.event.title}</span>{canManage&&<span><button className="link-button" disabled={index===0} onClick={()=>void saveTripEvents(trip,ids.map((id,i)=>i===index?ids[index-1]!:i===index-1?ids[index]!:id))}>↑</button><button className="link-button" disabled={index===ids.length-1} onClick={()=>void saveTripEvents(trip,ids.map((id,i)=>i===index?ids[index+1]!:i===index+1?ids[index]!:id))}>↓</button><button className="link-button danger" title="Remover evento" onClick={()=>void api.detachEvent(orgId,trip.id,link.event.id).then(()=>loadOrgData()).catch((e)=>setError(e.message))}><X size={14}/></button></span>}</div>})}</div>{canManage&&<div className="trip-add"><select aria-label="Evento a adicionar" value={tripEventSelection[trip.id]??""} onChange={(e)=>setTripEventSelection({...tripEventSelection,[trip.id]:e.target.value})}><option value="">Escolha um evento</option>{events.filter((event)=>!trip.eventLinks?.some((link)=>link.event.id===event.id)).map((event)=><option key={event.id} value={event.id}>{event.title}</option>)}</select><button className="secondary" disabled={!tripEventSelection[trip.id]} onClick={()=>{const next=tripEventSelection[trip.id];if(next)void saveTripEvents(trip,[...(trip.eventLinks?.map((link)=>link.event.id)??[]),next]);}}>{t("Adicionar")}</button></div>}</article>)}</div>}
+        {showTripForm && <form className="panel form-grid" onSubmit={submitTrip}><h3>{t("Nova viagem / turnê")}</h3><label className="wide">{t("Nome")}<input name="title" required placeholder={t("Turnê de outono")}/></label><label>{t("Início")}<input name="startAt" type="datetime-local" required/></label><label>{t("Término")}<input name="endAt" type="datetime-local" required/></label><label className="wide">{t("Descrição")}<textarea name="description" rows={2} placeholder={t("Objetivo e notas da viagem")}/></label><div className="form-actions"><button type="button" className="secondary" onClick={()=>setShowTripForm(false)}>{t("Cancelar")}</button><button className="primary">{t("Criar viagem")}</button></div></form>}
+        {!orgId ? <Empty title={t("Selecione uma orquestra")} text={t("As viagens são separadas por instituição.")}/> : trips.length===0 ? <div className="panel"><Empty title={t("Nenhuma viagem cadastrada")} text={t("Crie uma viagem e depois associe os eventos existentes.")}/></div> :
+          <div className="trip-grid">{trips.map((trip)=><article className="trip-card" key={trip.id}><div className="trip-card-icon"><MapPinned/></div><span className="pill neutral">{t(trip.status)}</span><h3>{trip.title}</h3><p>{localizedDate(trip.startAt)} – {localizedDate(trip.endAt)}</p>{canManage&&["PLANNING","CONFIRMED"].includes(trip.status)&&<button className="secondary trip-status-button" onClick={()=>void toggleTripConfirmation(trip)}>{t(trip.status==="PLANNING"?"Confirmar viagem":"Reabrir planejamento")}</button>}<div className="trip-events"><strong>{trip.eventLinks?.length ?? 0} {t("eventos vinculados")}</strong>{trip.eventLinks?.map((link,index)=>{const ids=trip.eventLinks?.map((item)=>item.event.id)??[];return <div className="trip-event-link" key={link.event.id}><span>{index+1}. {link.event.title}</span>{canManage&&<span><button className="link-button" aria-label={t("Mover evento para cima")} disabled={index===0} onClick={()=>void saveTripEvents(trip,ids.map((id,i)=>i===index?ids[index-1]!:i===index-1?ids[index]!:id))}>↑</button><button className="link-button" aria-label={t("Mover evento para baixo")} disabled={index===ids.length-1} onClick={()=>void saveTripEvents(trip,ids.map((id,i)=>i===index?ids[index+1]!:i===index+1?ids[index]!:id))}>↓</button><button className="link-button danger" title={t("Remover evento")} onClick={()=>void api.detachEvent(orgId,trip.id,link.event.id).then(()=>loadOrgData()).catch((e)=>setError(e.message))}><X size={14}/></button></span>}</div>})}</div>{canManage&&<div className="trip-add"><select aria-label={t("Evento a adicionar")} value={tripEventSelection[trip.id]??""} onChange={(e)=>setTripEventSelection({...tripEventSelection,[trip.id]:e.target.value})}><option value="">{t("Escolha um evento")}</option>{events.filter((event)=>!trip.eventLinks?.some((link)=>link.event.id===event.id)).map((event)=><option key={event.id} value={event.id}>{event.title}</option>)}</select><button className="secondary" disabled={!tripEventSelection[trip.id]} onClick={()=>{const next=tripEventSelection[trip.id];if(next)void saveTripEvents(trip,[...(trip.eventLinks?.map((link)=>link.event.id)??[]),next]);}}>{t("Adicionar")}</button></div>}</article>)}</div>}
       </section>}
       {tab === "team" && orgId && canAdmin && <section>
-        <div className="welcome-row"><div><h2>Equipe da orquestra</h2><p className="muted">Convide músicos e gerencie os vínculos existentes.</p></div></div>
+        <div className="welcome-row"><div><h2>{t("Equipe da orquestra")}</h2><p className="muted">{t("Convide músicos e gerencie os vínculos existentes.")}</p></div></div>
         <form className="panel form-grid" onSubmit={submitInvitation}>
-          <h3>Novo convite</h3><label>E-mail<input name="email" type="email" required/></label>
-          <label>Role<select name="roleKey" value={inviteRole} onChange={(e) => setInviteRole(e.target.value)}><option value="ORG_ADMIN">Administrador</option><option value="EVENT_MANAGER">Gestor de eventos</option><option value="MUSICIAN">Músico</option><option value="LIBRARIAN">Bibliotecário</option><option value="READ_ONLY">Somente leitura</option></select></label>
-          {inviteRole === "MUSICIAN" && <label>Instrumento<select name="instrument" required defaultValue=""><option value="" disabled>Selecione o instrumento</option>{instruments.map((instrument)=><option key={instrument} value={instrument}>{t(instrument)}</option>)}</select></label>}
-          <div className="form-actions"><button className="primary">Criar convite</button></div>
-          {inviteToken&&<div className="alert success wide">Convite criado. Copie e envie este link com o token: <code>{`${window.location.origin}/?invite=${encodeURIComponent(inviteToken)}`}</code></div>}
+          <h3>{t("Novo convite")}</h3><label>{t("E-mail")}<input name="email" type="email" required/></label>
+          <label>{t("Role")}<select name="roleKey" value={inviteRole} onChange={(e) => setInviteRole(e.target.value)}><option value="ORG_ADMIN">{t("Administrador")}</option><option value="EVENT_MANAGER">{t("Gestor de eventos")}</option><option value="MUSICIAN">{t("Músico")}</option><option value="LIBRARIAN">{t("Bibliotecário")}</option><option value="READ_ONLY">{t("Somente leitura")}</option></select></label>
+          {inviteRole === "MUSICIAN" && <label>{t("Instrumento")}<select name="instrument" required defaultValue=""><option value="" disabled>{t("Selecione o instrumento")}</option>{instruments.map((instrument)=><option key={instrument} value={instrument}>{t(instrument)}</option>)}</select></label>}
+          <div className="form-actions"><button className="primary">{t("Criar convite")}</button></div>
+          {inviteToken&&<div className="alert success wide">{t("Convite criado. Copie e envie este link com o token:")} <code>{`${window.location.origin}/?invite=${encodeURIComponent(inviteToken)}`}</code></div>}
         </form>
-        <div className="panel"><div className="panel-heading"><div><h3>Membros</h3><p className="muted">Selecione os roles e o instrumento de cada músico.</p></div><span className="count">{members.length}</span></div>
-          {members.map((member)=>{const isMusician=member.roles.some((item)=>item.role.key==="MUSICIAN");return <div className="member-row" key={member.id}><span><strong>{member.user.name}</strong><small>{member.user.email} · {t(member.status)}{isMusician&&member.instrument?` · ${t(member.instrument)}`:""}</small></span><select multiple aria-label={t("Roles de {name}",{name:member.user.name})} value={member.roles.map((item)=>item.role.key)} onChange={(e)=>void api.updateMember(orgId,member.id,{roleKeys:Array.from(e.currentTarget.selectedOptions,(option)=>option.value),...(Array.from(e.currentTarget.selectedOptions,(option)=>option.value).includes("MUSICIAN")&&member.instrument?{instrument:member.instrument}:{})}).then(()=>loadTeam()).catch((err)=>setError(err.message))}><option value="ORG_ADMIN">Administrador</option><option value="EVENT_MANAGER">Gestor de eventos</option><option value="MUSICIAN">Músico</option><option value="LIBRARIAN">Bibliotecário</option><option value="READ_ONLY">Somente leitura</option></select>
+        <div className="panel"><div className="panel-heading"><div><h3>{t("Membros")}</h3><p className="muted">{t("Selecione os roles e o instrumento de cada músico.")}</p></div><span className="count">{members.length}</span></div>
+          {members.map((member)=>{const isMusician=member.roles.some((item)=>item.role.key==="MUSICIAN");return <div className="member-row" key={member.id}><span><strong>{member.user.name}</strong><small>{member.user.email} · {t(member.status)}{isMusician&&member.instrument?` · ${t(member.instrument)}`:""}</small></span><select multiple aria-label={t("Roles de {name}",{name:member.user.name})} value={member.roles.map((item)=>item.role.key)} onChange={(e)=>void api.updateMember(orgId,member.id,{roleKeys:Array.from(e.currentTarget.selectedOptions,(option)=>option.value),...(Array.from(e.currentTarget.selectedOptions,(option)=>option.value).includes("MUSICIAN")&&member.instrument?{instrument:member.instrument}:{})}).then(()=>loadTeam()).catch((err)=>setError(err.message))}><option value="ORG_ADMIN">{t("Administrador")}</option><option value="EVENT_MANAGER">{t("Gestor de eventos")}</option><option value="MUSICIAN">{t("Músico")}</option><option value="LIBRARIAN">{t("Bibliotecário")}</option><option value="READ_ONLY">{t("Somente leitura")}</option></select>
             {isMusician&&<select aria-label={`${t("Instrumento")} ${member.user.name}`} value={member.instrument??""} onChange={(e)=>void api.updateMember(orgId,member.id,{instrument:e.target.value}).then(()=>loadTeam()).catch((err)=>setError(err.message))}><option value="" disabled>{t("Selecione o instrumento")}</option>{instruments.map((instrument)=><option key={instrument} value={instrument}>{t(instrument)}</option>)}</select>}
             <button className="secondary" onClick={()=>void api.updateMember(orgId,member.id,{status:member.status==="ACTIVE"?"SUSPENDED":"ACTIVE"}).then(()=>loadTeam()).catch((err)=>setError(err.message))}>{t(member.status==="ACTIVE"?"Suspender":"Reativar")}</button></div>})}
         </div>
-        {invitations.length>0&&<div className="panel"><h3>Convites pendentes</h3>{invitations.map((invitation)=><div className="member-row" key={invitation.id}><span><strong>{invitation.email}</strong><small>{invitation.roleKeys.map((role)=>t(role)).join(", ")}{invitation.instrument?` · ${t(invitation.instrument)}`:""} · {t("expira em")} {localizedDate(invitation.expiresAt)}</small></span></div>)}</div>}
+        {invitations.length>0&&<div className="panel"><h3>{t("Convites pendentes")}</h3>{invitations.map((invitation)=><div className="member-row" key={invitation.id}><span><strong>{invitation.email}</strong><small>{invitation.roleKeys.map((role)=>t(role)).join(", ")}{invitation.instrument?` · ${t(invitation.instrument)}`:""} · {t("expira em")} {localizedDate(invitation.expiresAt)}</small></span></div>)}</div>}
       </section>}
-      {tab==="documents" && <section><div className="welcome-row"><div><h2>Biblioteca</h2><p className="muted">Arquivos privados da instituição, com acesso conforme a visibilidade definida.</p></div></div>{canLibrary&&<form className="panel form-grid" onSubmit={submitDocument}><h3>Adicionar documento</h3><label>Título<input name="title" placeholder="Partitura, programa, comunicado"/></label><label>Visibilidade<select name="visibility" defaultValue="MEMBERS"><option value="ADMINS_ONLY">Somente administradores</option><option value="STAFF">Equipe (administração, eventos e biblioteca)</option><option value="MEMBERS">Membros da orquestra</option><option value="PUBLIC">Público da orquestra (membros autenticados)</option></select></label><label className="wide">Arquivo<input type="file" name="file" accept=".pdf,.txt,.jpg,.jpeg,.png,.webp,.mp3,.wav,.docx" required/></label><div className="form-actions"><button className="primary">Enviar arquivo</button></div></form>}<div className="panel"><div className="panel-heading"><h3>Documentos disponíveis</h3><span className="count">{documents.length}</span></div>{documents.length===0?<Empty title="Biblioteca vazia" text="Os documentos disponíveis para seu role aparecerão aqui."/>:documents.map((doc)=><div className="member-row" key={doc.id}><span><strong>{doc.title}</strong><small>{doc.fileName} · {t(doc.visibility)} · {Math.ceil(Number(doc.sizeBytes)/1024)} KB</small></span><a className="secondary" href={api.documentUrl(orgId,doc.id)}>{t("Baixar")}</a>{canLibrary&&<button className="link-button danger" onClick={()=>void api.deleteDocument(orgId,doc.id).then(()=>loadDocuments()).catch((e)=>setError(e.message))}><X size={15}/></button>}</div>)}</div></section>}
-      <footer className="footer">ORCHESTRA SPACE <span>·</span> versão 0.2.0 <span>·</span> Feito para equipes musicais</footer>
+      {tab==="documents" && <section><div className="welcome-row"><div><h2>{t("Biblioteca")}</h2><p className="muted">{t("Arquivos privados da instituição, com acesso conforme a visibilidade definida.")}</p></div></div>{canLibrary&&<form className="panel form-grid" onSubmit={submitDocument}><h3>{t("Adicionar documento")}</h3><label>{t("Título")}<input name="title" placeholder={t("Partitura, programa, comunicado")}/></label><label>{t("Visibilidade")}<select name="visibility" defaultValue="MEMBERS"><option value="ADMINS_ONLY">{t("Somente administradores")}</option><option value="STAFF">{t("Equipe (administração, eventos e biblioteca)")}</option><option value="MEMBERS">{t("Membros da orquestra")}</option><option value="PUBLIC">{t("Público da orquestra (membros autenticados)")}</option></select></label><div className="file-field wide"><label htmlFor="document-file">{t("Arquivo")}</label><div className="file-picker"><label htmlFor="document-file" className="secondary">{t("Selecionar arquivo")}</label><span id="document-file-name">{uploadFileName || t("Nenhum arquivo selecionado")}</span><input className="visually-hidden" id="document-file" type="file" name="file" accept=".pdf,.txt,.jpg,.jpeg,.png,.webp,.mp3,.wav,.docx" aria-describedby="document-file-name" onChange={(event)=>setUploadFileName(event.currentTarget.files?.[0]?.name ?? "")} required/></div></div><div className="form-actions"><button className="primary">{t("Enviar arquivo")}</button></div></form>}<div className="panel"><div className="panel-heading"><h3>{t("Documentos disponíveis")}</h3><span className="count">{documents.length}</span></div>{documents.length===0?<Empty title={t("Biblioteca vazia")} text={t("Os documentos disponíveis para seu role aparecerão aqui.")}/>:documents.map((doc)=><div className="member-row" key={doc.id}><span><strong>{doc.title}</strong><small>{doc.fileName} · {t(doc.visibility)} · {Math.ceil(Number(doc.sizeBytes)/1024)} {t("KB")}</small></span><a className="secondary" href={api.documentUrl(orgId,doc.id)}>{t("Baixar")}</a>{canLibrary&&<button className="link-button danger" aria-label={t("Excluir documento")} onClick={()=>void api.deleteDocument(orgId,doc.id).then(()=>loadDocuments()).catch((e)=>setError(e.message))}><X size={15}/></button>}</div>)}</div></section>}
+      <footer className="footer">ORCHESTRA SPACE <span>·</span> {t("versão 0.2.0")} <span>·</span> {t("Feito para equipes musicais")}</footer>
     </main>
   </div>);
 }
