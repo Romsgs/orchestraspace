@@ -5,6 +5,7 @@ import { prisma } from "../../lib/prisma.js";
 import { logger } from "../../lib/logger.js";
 import { asyncHandler } from "../../middleware/async-handler.js";
 import { requireAuth, requireSuperadmin, orgRoles } from "../../middleware/auth.js";
+import { loadMembershipRoles, loadMembershipRoleKeys } from "../../lib/safe-membership-relations.js";
 
 export const organizationsRouter = Router();
 
@@ -14,14 +15,14 @@ organizationsRouter.get("/:organizationId/members", requireAuth, asyncHandler(as
   if (!organization) { res.status(404).json({ error: "ORGANIZATION_NOT_FOUND" }); return; }
   const isSuperAdmin = req.currentUser!.isSuperAdmin;
   if (!isSuperAdmin) {
-    const admin = await prisma.membership.findFirst({ where: { organizationId, userId: req.currentUser!.id, status: "ACTIVE", organization: { status: "ACTIVE" }, roles: { some: { role: { key: "ORG_ADMIN" } } } }, select: { id: true } });
-    if (!admin) { res.status(403).json({ error: "FORBIDDEN" }); return; }
+    const admin = await prisma.membership.findFirst({ where: { organizationId, userId: req.currentUser!.id, status: "ACTIVE" }, select: { id: true } });
+    if (!admin || !(await loadMembershipRoleKeys(admin.id)).includes("ORG_ADMIN")) { res.status(403).json({ error: "FORBIDDEN" }); return; }
   }
   let memberships;
   let invitations;
   try {
     [memberships, invitations] = await Promise.all([
-      prisma.membership.findMany({ where: { organizationId }, include: { user: { select: { id: true, name: true, email: true } }, roles: { include: { role: { select: { key: true, name: true } } } } }, orderBy: { createdAt: "asc" } }),
+      prisma.membership.findMany({ where: { organizationId }, orderBy: { createdAt: "asc" } }),
       prisma.invitation.findMany({ where: {
         organizationId,
         OR: [{ acceptedAt: null }, { acceptedAt: { isSet: false } }],
@@ -46,7 +47,20 @@ organizationsRouter.get("/:organizationId/members", requireAuth, asyncHandler(as
     }
     throw error;
   }
-  res.json({ memberships, invitations });
+  const userIds = [...new Set(memberships.map(({ userId }) => userId))];
+  const [users, rolesByMembership] = await Promise.all([
+    prisma.user.findMany({ where: { id: { in: userIds } }, select: { id: true, name: true, email: true } }),
+    loadMembershipRoles(memberships.map(({ id }) => id))
+  ]);
+  const usersById = new Map(users.map((user) => [user.id, user]));
+  const visibleMemberships = memberships.flatMap((membership) => {
+    const user = usersById.get(membership.userId);
+    return user ? [{ ...membership, user, roles: rolesByMembership.get(membership.id) ?? [] }] : [];
+  });
+  if (visibleMemberships.length !== memberships.length) {
+    logger.warn({ organizationId, missingCount: memberships.length - visibleMemberships.length }, "Skipped memberships with missing user records");
+  }
+  res.json({ memberships: visibleMemberships, invitations });
 }));
 
 organizationsRouter.get("/", requireAuth, asyncHandler(async (req, res) => {
@@ -55,17 +69,17 @@ organizationsRouter.get("/", requireAuth, asyncHandler(async (req, res) => {
     res.json({ organizations });
     return;
   }
-  const memberships = await prisma.membership.findMany({
-    where: { userId: req.currentUser!.id, status: "ACTIVE", organization: { status: "ACTIVE" } },
-    include: { organization: true, roles: { include: { role: true } } },
-    orderBy: { organization: { name: "asc" } }
-  });
-  res.json({
-    organizations: memberships.map((m) => ({
-      ...m.organization,
-      roles: m.roles.map((r) => r.role.key)
-    }))
-  });
+  const memberships = await prisma.membership.findMany({ where: { userId: req.currentUser!.id, status: "ACTIVE" } });
+  const [organizations, rolesByMembership] = await Promise.all([
+    prisma.organization.findMany({ where: { id: { in: [...new Set(memberships.map(({ organizationId }) => organizationId))] }, status: "ACTIVE" } }),
+    loadMembershipRoles(memberships.map(({ id }) => id))
+  ]);
+  const organizationById = new Map(organizations.map((organization) => [organization.id, organization]));
+  const visibleOrganizations = memberships.flatMap((membership) => {
+    const organization = organizationById.get(membership.organizationId);
+    return organization ? [{ ...organization, roles: (rolesByMembership.get(membership.id) ?? []).map(({ role }) => role.key) }] : [];
+  }).sort((a, b) => a.name.localeCompare(b.name));
+  res.json({ organizations: visibleOrganizations });
 }));
 
 organizationsRouter.post("/", requireAuth, requireSuperadmin, asyncHandler(async (req, res) => {
@@ -144,11 +158,8 @@ organizationsRouter.post("/:organizationId/invitations", requireAuth, asyncHandl
   if (input.roleKey === "MUSICIAN" && !input.instrument) { res.status(400).json({ error: "INSTRUMENT_REQUIRED", message: "Selecione o instrumento do músico." }); return; }
   const actor = req.currentUser!;
   if (!actor.isSuperAdmin) {
-    const membership = await prisma.membership.findFirst({
-      where: { organizationId, userId: actor.id, status: "ACTIVE" },
-      include: { roles: { include: { role: true } } }
-    });
-    if (!membership?.roles.some((r) => r.role.key === "ORG_ADMIN")) {
+    const membership = await prisma.membership.findFirst({ where: { organizationId, userId: actor.id, status: "ACTIVE" }, select: { id: true } });
+    if (!membership || !(await loadMembershipRoleKeys(membership.id)).includes("ORG_ADMIN")) {
       res.status(403).json({ error: "FORBIDDEN", message: "Somente administradores podem convidar membros." });
       return;
     }
@@ -192,12 +203,8 @@ organizationsRouter.post("/:organizationId/members", requireAuth, asyncHandler(a
 
   const actor = req.currentUser!;
   if (!actor.isSuperAdmin) {
-    const membership = await prisma.membership.findFirst({
-      where: { organizationId, userId: actor.id, status: "ACTIVE" },
-      include: { roles: { include: { role: true } } }
-    });
-    const keys = membership?.roles.map((r) => r.role.key) ?? [];
-    if (!keys.includes("ORG_ADMIN")) {
+    const membership = await prisma.membership.findFirst({ where: { organizationId, userId: actor.id, status: "ACTIVE" }, select: { id: true } });
+    if (!membership || !(await loadMembershipRoleKeys(membership.id)).includes("ORG_ADMIN")) {
       res.status(403).json({ error: "FORBIDDEN", message: "Somente administradores da orquestra podem adicionar membros." });
       return;
     }
@@ -230,8 +237,7 @@ organizationsRouter.post("/:organizationId/members", requireAuth, asyncHandler(a
         data: {
           userId: user.id, organizationId, status: "ACTIVE", joinedAt: new Date(), instrument: input.roleKey === "MUSICIAN" ? input.instrument : undefined,
           roles: { create: { roleId: role.id } }
-        },
-        include: { user: { select: { id: true, name: true, email: true } }, roles: { include: { role: true } } }
+        }
       });
     }
     await tx.membership.update({
@@ -245,13 +251,18 @@ organizationsRouter.post("/:organizationId/members", requireAuth, asyncHandler(a
         } }
       }
     });
-    return tx.membership.findUniqueOrThrow({
-      where: { id: existing.id },
-      include: { user: { select: { id: true, name: true, email: true } }, roles: { include: { role: true } } }
-    });
+    return tx.membership.findUniqueOrThrow({ where: { id: existing.id } });
   });
-
-  res.status(201).json({ membership });
+  const [memberUser, roleMap] = await Promise.all([
+    prisma.user.findUnique({ where: { id: membership.userId }, select: { id: true, name: true, email: true } }),
+    loadMembershipRoles([membership.id])
+  ]);
+  if (!memberUser) {
+    logger.warn({ organizationId, membershipId: membership.id }, "Membership references a missing user after member upsert");
+    res.status(409).json({ error: "ORPHANED_MEMBERSHIP", message: "O vínculo existente aponta para uma conta removida. Corrija o vínculo antes de tentar novamente." });
+    return;
+  }
+  res.status(201).json({ membership: { ...membership, user: memberUser, roles: roleMap.get(membership.id) ?? [] } });
 }));
 
 organizationsRouter.patch("/:organizationId/members/:membershipId", requireAuth, asyncHandler(async (req, res) => {
@@ -259,11 +270,8 @@ organizationsRouter.patch("/:organizationId/members/:membershipId", requireAuth,
     organizationId: z.string().min(1), membershipId: z.string().min(1)
   }).parse(req.params);
   if (!req.currentUser!.isSuperAdmin) {
-    const membership = await prisma.membership.findFirst({
-      where: { organizationId, userId: req.currentUser!.id, status: "ACTIVE" },
-      include: { roles: { include: { role: true } } }
-    });
-    if (!membership?.roles.some((r) => r.role.key === "ORG_ADMIN")) {
+    const membership = await prisma.membership.findFirst({ where: { organizationId, userId: req.currentUser!.id, status: "ACTIVE" }, select: { id: true } });
+    if (!membership || !(await loadMembershipRoleKeys(membership.id)).includes("ORG_ADMIN")) {
       res.status(403).json({ error: "FORBIDDEN" });
       return;
     }
@@ -291,10 +299,15 @@ organizationsRouter.patch("/:organizationId/members/:membershipId", requireAuth,
     if (!input.roleKeys.includes("MUSICIAN")) data.instrument = null;
     else if (input.instrument === undefined && !target.instrument) { res.status(400).json({ error: "INSTRUMENT_REQUIRED", message: "Defina o instrumento do músico." }); return; }
   }
-  const updated = await prisma.membership.update({
-    where: { id: membershipId },
-    data,
-    include: { user: { select: { id: true, name: true, email: true } }, roles: { include: { role: true } } }
-  });
-  res.json({ membership: updated });
+  const updated = await prisma.membership.update({ where: { id: membershipId }, data });
+  const [memberUser, roleMap] = await Promise.all([
+    prisma.user.findUnique({ where: { id: updated.userId }, select: { id: true, name: true, email: true } }),
+    loadMembershipRoles([updated.id])
+  ]);
+  if (!memberUser) {
+    logger.warn({ organizationId, membershipId }, "Could not return updated membership because its user record is missing");
+    res.status(409).json({ error: "ORPHANED_MEMBERSHIP", message: "O vínculo aponta para uma conta removida." });
+    return;
+  }
+  res.json({ membership: { ...updated, user: memberUser, roles: roleMap.get(updated.id) ?? [] } });
 }));

@@ -1,8 +1,11 @@
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../../lib/prisma.js";
+import { logger } from "../../lib/logger.js";
 import { asyncHandler } from "../../middleware/async-handler.js";
 import { orgRoles, requireAuth } from "../../middleware/auth.js";
+import { loadMembershipRoles } from "../../lib/safe-membership-relations.js";
+import { loadOrganizationEvents } from "./data.js";
 
 export const eventsRouter = Router();
 
@@ -48,15 +51,7 @@ eventsRouter.get("/:organizationId/events", requireAuth, asyncHandler(async (req
     res.status(403).json({ error: "ORG_ACCESS_DENIED" });
     return;
   }
-  const events = await prisma.event.findMany({
-    where: { organizationId },
-    include: {
-      rehearsalDetails: true,
-      concertDetails: true,
-      musicians: { include: { membership: { include: { user: { select: { id: true, name: true, email: true } } } } } }
-    },
-    orderBy: { startAt: "asc" }
-  });
+  const events = await loadOrganizationEvents(organizationId);
   res.json({ events });
 }));
 
@@ -70,13 +65,26 @@ eventsRouter.get("/:organizationId/musicians", requireAuth, asyncHandler(async (
   const memberships = await prisma.membership.findMany({
     where: {
       organizationId,
-      status: "ACTIVE",
-      roles: { some: { role: { key: "MUSICIAN" } } }
+      status: "ACTIVE"
     },
-    select: { id: true, instrument: true, user: { select: { id: true, name: true, email: true } } },
-    orderBy: { user: { name: "asc" } }
+    select: { id: true, userId: true, instrument: true }
   });
-  res.json({ memberships });
+  const roleMap = await loadMembershipRoles(memberships.map(({ id }) => id));
+  const musicianMemberships = memberships.filter(({ id }) => roleMap.get(id)?.some(({ role }) => role.key === "MUSICIAN"));
+  const users = await prisma.user.findMany({
+    where: { id: { in: [...new Set(musicianMemberships.map(({ userId }) => userId))] } },
+    select: { id: true, name: true, email: true }
+  });
+  const userById = new Map(users.map((user) => [user.id, user]));
+  const visibleMemberships = musicianMemberships.flatMap((membership) => {
+    const user = userById.get(membership.userId);
+    return user ? [{ id: membership.id, instrument: membership.instrument, user }] : [];
+  }).sort((a, b) => a.user.name.localeCompare(b.user.name));
+  const missingUserCount = musicianMemberships.length - visibleMemberships.length;
+  if (missingUserCount) {
+    logger.warn({ organizationId, missingUserCount }, "Skipped musician memberships with missing user records");
+  }
+  res.json({ memberships: visibleMemberships });
 }));
 
 eventsRouter.post("/:organizationId/events", requireAuth, orgRoles("ORG_ADMIN", "EVENT_MANAGER"), asyncHandler(async (req, res) => {
@@ -161,12 +169,19 @@ eventsRouter.put("/:organizationId/events/:eventId/lineup", requireAuth, orgRole
   }
   const validMemberships = membershipIds.length ? await prisma.membership.findMany({
     where: {
-      id: { in: membershipIds }, organizationId, status: "ACTIVE",
-      roles: { some: { role: { key: "MUSICIAN" } } }
+      id: { in: membershipIds }, organizationId, status: "ACTIVE"
     },
-    select: { id: true }
+    select: { id: true, userId: true }
   }) : [];
-  if (validMemberships.length !== membershipIds.length) {
+  const rolesByMembership = await loadMembershipRoles(validMemberships.map(({ id }) => id));
+  const users = validMemberships.length ? await prisma.user.findMany({
+    where: { id: { in: validMemberships.map(({ userId }) => userId) } }, select: { id: true }
+  }) : [];
+  const userIds = new Set(users.map(({ id }) => id));
+  const validMusicianIds = new Set(validMemberships
+    .filter(({ id, userId }) => userIds.has(userId) && rolesByMembership.get(id)?.some(({ role }) => role.key === "MUSICIAN"))
+    .map(({ id }) => id));
+  if (membershipIds.some((id) => !validMusicianIds.has(id))) {
     res.status(400).json({ error: "INVALID_MUSICIANS", message: "Selecione músicos ativos desta orquestra." });
     return;
   }
@@ -179,13 +194,8 @@ eventsRouter.put("/:organizationId/events/:eventId/lineup", requireAuth, orgRole
       data: { actorId: req.currentUser!.id, organizationId, action: "event.lineup.updated", entityType: "Event", entityId: eventId }
     });
   });
-  const updated = await prisma.eventMusician.findMany({
-    where: { eventId },
-    include: {
-      membership: { include: { user: { select: { id: true, name: true, email: true } } } }
-    },
-    orderBy: { membership: { user: { name: "asc" } } }
-  });
+  const events = await loadOrganizationEvents(organizationId, [eventId]);
+  const updated = events[0]?.musicians ?? [];
   res.json({ musicians: updated });
 }));
 

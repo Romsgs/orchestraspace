@@ -6,6 +6,8 @@ import rateLimit from "express-rate-limit";
 import { prisma } from "../../lib/prisma.js";
 import { asyncHandler } from "../../middleware/async-handler.js";
 import { requireAuth } from "../../middleware/auth.js";
+import { loadMembershipRoles } from "../../lib/safe-membership-relations.js";
+import { logger } from "../../lib/logger.js";
 
 export const authRouter = Router();
 
@@ -63,47 +65,66 @@ authRouter.post("/accept-invitation", asyncHandler(async (req, res) => {
     res.status(400).json({ error: "INVITATION_ROLES_INVALID", message: "O convite contém um role que não existe mais." });
     return;
   }
+  const acceptanceStartedAt = Date.now();
+  logger.info({ invitationId: invitation.id, organizationId: invitation.organizationId, roleCount: roles.length }, "Accepting organization invitation");
   const passwordHash = input.password ? await argon2.hash(input.password, { type: argon2.argon2id }) : undefined;
-  const userId = await prisma.$transaction(async (tx) => {
-    const claimed = await tx.invitation.updateMany({
-      // MongoDB stores optional null fields as missing unless explicitly set.
-      // Match both representations so a fresh invitation can be claimed.
-      where: {
-        id: invitation.id,
-        OR: [
-          { acceptedAt: null },
-          { acceptedAt: { isSet: false } }
-        ],
-        expiresAt: { gt: new Date() }
-      },
-      data: { acceptedAt: new Date() }
-    });
-    if (!claimed.count) return null;
-    const account = existing ?? await tx.user.create({
-      data: { email: invitation.email, name: input.name, passwordHash: passwordHash!, emailVerifiedAt: null }
-    });
-    const membership = await tx.membership.findUnique({ where: { userId_organizationId: { userId: account.id, organizationId: invitation.organizationId } } });
-    if (!membership) {
-      await tx.membership.create({ data: {
-        userId: account.id, organizationId: invitation.organizationId, status: "ACTIVE", joinedAt: new Date(), instrument: invitation.instrument,
-        roles: { create: roles.map((role) => ({ roleId: role.id })) }
-      } });
-    } else {
-      await tx.membership.update({ where: { id: membership.id }, data: { status: "ACTIVE", instrument: invitation.instrument ?? undefined } });
-      for (const role of roles) {
-        await tx.membershipRole.upsert({
-          where: { membershipId_roleId: { membershipId: membership.id, roleId: role.id } },
-          create: { membershipId: membership.id, roleId: role.id },
-          update: {}
-        });
+  let userId: string | null;
+  try {
+    userId = await prisma.$transaction(async (tx) => {
+      const claimed = await tx.invitation.updateMany({
+        // MongoDB stores optional null fields as missing unless explicitly set.
+        // Match both representations so a fresh invitation can be claimed.
+        where: {
+          id: invitation.id,
+          OR: [
+            { acceptedAt: null },
+            { acceptedAt: { isSet: false } }
+          ],
+          expiresAt: { gt: new Date() }
+        },
+        data: { acceptedAt: new Date() }
+      });
+      if (!claimed.count) return null;
+      const account = existing ?? await tx.user.create({
+        data: { email: invitation.email, name: input.name, passwordHash: passwordHash!, emailVerifiedAt: null }
+      });
+      const membership = await tx.membership.findUnique({ where: { userId_organizationId: { userId: account.id, organizationId: invitation.organizationId } } });
+      if (!membership) {
+        await tx.membership.create({ data: {
+          userId: account.id, organizationId: invitation.organizationId, status: "ACTIVE", joinedAt: new Date(), instrument: invitation.instrument,
+          roles: { create: roles.map((role) => ({ roleId: role.id })) }
+        } });
+      } else {
+        await tx.membership.update({ where: { id: membership.id }, data: { status: "ACTIVE", instrument: invitation.instrument ?? undefined } });
+        for (const role of roles) {
+          await tx.membershipRole.upsert({
+            where: { membershipId_roleId: { membershipId: membership.id, roleId: role.id } },
+            create: { membershipId: membership.id, roleId: role.id },
+            update: {}
+          });
+        }
       }
+      return account.id;
+    });
+  } catch (error) {
+    logger.error({
+      invitationId: invitation.id,
+      organizationId: invitation.organizationId,
+      roleCount: roles.length,
+      durationMs: Date.now() - acceptanceStartedAt,
+      err: error
+    }, "Invitation acceptance transaction failed");
+    if (typeof error === "object" && error !== null && "code" in error && error.code === "P2002") {
+      res.status(409).json({ error: "ACCOUNT_CREATED_CONCURRENTLY", message: "A conta foi criada em outra solicitação. Entre com ela e aceite o convite novamente." });
+      return;
     }
-    return account.id;
-  });
+    throw error;
+  }
   if (!userId) {
     res.status(400).json({ error: "INVITATION_ALREADY_USED", message: "Este convite foi aceito em outra solicitação. Faça login com a conta associada ao convite." });
     return;
   }
+  logger.info({ invitationId: invitation.id, organizationId: invitation.organizationId, durationMs: Date.now() - acceptanceStartedAt }, "Organization invitation accepted");
   res.status(200).json({ message: "Convite aceito e vínculo ativado. Faça login para continuar.", userId });
 }));
 
@@ -140,16 +161,24 @@ authRouter.post("/logout", asyncHandler(async (req, res) => {
 authRouter.get("/me", requireAuth, asyncHandler(async (req, res) => {
   const user = await prisma.user.findUnique({
     where: { id: req.currentUser!.id },
-    select: {
-      id: true, email: true, name: true, isSuperAdmin: true,
-      memberships: {
-        where: { status: "ACTIVE", organization: { status: "ACTIVE" } },
-        include: {
-          organization: { select: { id: true, name: true, slug: true, timezone: true } },
-          roles: { include: { role: { select: { key: true, name: true } } } }
-        }
-      }
-    }
+    select: { id: true, email: true, name: true, isSuperAdmin: true }
   });
-  res.json({ user });
+  if (!user) { res.status(401).json({ error: "INVALID_SESSION" }); return; }
+  const memberships = await prisma.membership.findMany({ where: { userId: user.id, status: "ACTIVE" } });
+  const [organizations, rolesByMembership] = await Promise.all([
+    prisma.organization.findMany({
+      where: { id: { in: [...new Set(memberships.map(({ organizationId }) => organizationId))] }, status: "ACTIVE" },
+      select: { id: true, name: true, slug: true, timezone: true }
+    }),
+    loadMembershipRoles(memberships.map(({ id }) => id))
+  ]);
+  const organizationById = new Map(organizations.map((organization) => [organization.id, organization]));
+  const visibleMemberships = memberships.flatMap((membership) => {
+    const organization = organizationById.get(membership.organizationId);
+    return organization ? [{ ...membership, organization, roles: rolesByMembership.get(membership.id) ?? [] }] : [];
+  });
+  if (visibleMemberships.length !== memberships.length) {
+    logger.warn({ userId: user.id, missingCount: memberships.length - visibleMemberships.length }, "Skipped memberships with missing or inactive organization records");
+  }
+  res.json({ user: { ...user, memberships: visibleMemberships } });
 }));

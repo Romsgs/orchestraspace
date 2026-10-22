@@ -4,8 +4,10 @@ import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { z } from "zod";
 import { prisma } from "../../lib/prisma.js";
+import { logger } from "../../lib/logger.js";
 import { asyncHandler } from "../../middleware/async-handler.js";
 import { orgRoles, requireAuth } from "../../middleware/auth.js";
+import { loadMembershipRoleKeys } from "../../lib/safe-membership-relations.js";
 
 export const documentsRouter = Router();
 const storageDir = process.env.DOCUMENT_STORAGE_PATH || join(process.cwd(), ".private-documents");
@@ -29,10 +31,13 @@ function matchesMime(bytes: Buffer, mimeType: string) {
 
 async function activeMembership(organizationId: string, userId: string, isSuperAdmin: boolean) {
   if (isSuperAdmin) return { roles: [{ role: { key: "ORG_ADMIN" } }] };
-  return prisma.membership.findFirst({
+  const membership = await prisma.membership.findFirst({
     where: { organizationId, userId, status: "ACTIVE", organization: { status: "ACTIVE" } },
-    include: { roles: { include: { role: { select: { key: true } } } } }
+    select: { id: true }
   });
+  if (!membership) return null;
+  const keys = await loadMembershipRoleKeys(membership.id);
+  return { roles: keys.map((key) => ({ role: { key } })) };
 }
 
 documentsRouter.get("/:organizationId/documents", requireAuth, asyncHandler(async (req, res) => {
@@ -44,10 +49,21 @@ documentsRouter.get("/:organizationId/documents", requireAuth, asyncHandler(asyn
   const canSeeAdmin = req.currentUser!.isSuperAdmin || roles.includes("ORG_ADMIN");
   const documents = await prisma.document.findMany({
     where: { organizationId, ...(canSeeAdmin ? {} : canSeeStaff ? { visibility: { in: ["STAFF", "MEMBERS", "PUBLIC"] } } : { visibility: { in: ["MEMBERS", "PUBLIC"] } }) },
-    select: { id: true, title: true, description: true, fileName: true, mimeType: true, sizeBytes: true, visibility: true, createdAt: true, uploadedBy: { select: { name: true } } },
+    select: { id: true, uploadedById: true, title: true, description: true, fileName: true, mimeType: true, sizeBytes: true, visibility: true, createdAt: true },
     orderBy: { createdAt: "desc" }
   });
-  res.json({ documents: documents.map((document) => ({ ...document, sizeBytes: document.sizeBytes.toString() })) });
+  const uploaders = await prisma.user.findMany({
+    where: { id: { in: [...new Set(documents.map(({ uploadedById }) => uploadedById))] } },
+    select: { id: true, name: true }
+  });
+  const uploaderById = new Map(uploaders.map((user) => [user.id, user]));
+  const missingUploaderCount = documents.filter(({ uploadedById }) => !uploaderById.has(uploadedById)).length;
+  if (missingUploaderCount) logger.warn({ organizationId, missingUploaderCount }, "Returning documents with missing uploader as unattributed");
+  res.json({ documents: documents.map(({ uploadedById, ...document }) => ({
+    ...document,
+    sizeBytes: document.sizeBytes.toString(),
+    uploadedBy: uploaderById.has(uploadedById) ? { name: uploaderById.get(uploadedById)!.name } : null
+  })) });
 }));
 
 documentsRouter.post("/:organizationId/documents", requireAuth, orgRoles("ORG_ADMIN", "LIBRARIAN"), express.raw({ type: ["application/octet-stream", "application/pdf", "text/plain", "image/jpeg", "image/png", "image/webp", "audio/mpeg", "audio/wav", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"], limit: maxBytes }), asyncHandler(async (req, res) => {

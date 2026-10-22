@@ -1,5 +1,6 @@
 import type { Request, Response, NextFunction } from "express";
 import { prisma } from "../lib/prisma.js";
+import { loadMembershipRoleKeys } from "../lib/safe-membership-relations.js";
 
 export type CurrentUser = {
   id: string;
@@ -67,13 +68,13 @@ export async function requireOrgRole(
         status: "ACTIVE",
         organization: { status: "ACTIVE" }
       },
-      include: { roles: { include: { role: true } } }
+      select: { id: true }
     });
     if (!membership) {
       res.status(403).json({ error: "ORG_ACCESS_DENIED", message: "Você não é membro ativo desta orquestra." });
       return;
     }
-    const roles = membership.roles.map((item) => item.role.key);
+    const roles = await loadMembershipRoleKeys(membership.id);
     if (!roles.some((role) => allowedRoles.includes(role))) {
       res.status(403).json({ error: "ORG_PERMISSION_DENIED", message: "Você não tem permissão para esta operação." });
       return;

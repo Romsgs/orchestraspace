@@ -87,4 +87,4 @@ export type Event = {
 export type Trip = { id: string; title: string; startAt: string; endAt: string; status: string; eventLinks?: Array<{ event: Event }> };
 export type Membership = { id: string; status: string; instrument?: Instrument | null; user: { id: string; name: string; email: string }; roles: Array<{ role: { key: string; name: string } }> };
 export type Invitation = { id: string; email: string; roleKeys: string[]; instrument?: Instrument | null; expiresAt: string };
-export type Document = { id: string; title: string; description?: string | null; fileName: string; mimeType: string; sizeBytes: string | number; visibility: string; createdAt: string; uploadedBy?: { name: string } };
+export type Document = { id: string; title: string; description?: string | null; fileName: string; mimeType: string; sizeBytes: string | number; visibility: string; createdAt: string; uploadedBy?: { name: string } | null };

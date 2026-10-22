@@ -3,6 +3,8 @@ import { z } from "zod";
 import { prisma } from "../../lib/prisma.js";
 import { asyncHandler } from "../../middleware/async-handler.js";
 import { orgRoles, requireAuth } from "../../middleware/auth.js";
+import { logger } from "../../lib/logger.js";
+import { loadOrganizationEvents } from "../events/data.js";
 
 export const tripsRouter = Router();
 
@@ -27,26 +29,38 @@ tripsRouter.get("/:organizationId/trips", requireAuth, asyncHandler(async (req, 
     res.status(403).json({ error: "ORG_ACCESS_DENIED" });
     return;
   }
-  const trips = await prisma.trip.findMany({
-    where: { organizationId },
-    include: {
-      eventLinks: {
-        include: {
-          event: {
-            include: {
-              musicians: {
-                include: { membership: { include: { user: { select: { id: true, name: true, email: true } } } } }
-              }
-            }
-          }
-        },
-        orderBy: { sortOrder: "asc" }
-      },
-      stops: { orderBy: { sortOrder: "asc" } }
-    },
-    orderBy: { startAt: "asc" }
+  const trips = await prisma.trip.findMany({ where: { organizationId }, orderBy: { startAt: "asc" } });
+  const tripIds = trips.map(({ id }) => id);
+  const [links, stops] = tripIds.length ? await Promise.all([
+    prisma.tripEvent.findMany({ where: { tripId: { in: tripIds } }, orderBy: { sortOrder: "asc" } }),
+    prisma.tripStop.findMany({ where: { tripId: { in: tripIds } }, orderBy: { sortOrder: "asc" } })
+  ]) : [[], []];
+  const events = await loadOrganizationEvents(organizationId, [...new Set(links.map(({ eventId }) => eventId))]);
+  const eventById = new Map(events.map((event) => [event.id, event]));
+  const validLinks = links.flatMap((link) => {
+    const event = eventById.get(link.eventId);
+    return event ? [{ ...link, event }] : [];
   });
-  res.json({ trips });
+  if (validLinks.length !== links.length) {
+    logger.warn({ organizationId, missingCount: links.length - validLinks.length }, "Skipped trip-event links with missing or cross-organization events");
+  }
+  const linksByTripId = new Map<string, typeof validLinks>();
+  for (const link of validLinks) {
+    const list = linksByTripId.get(link.tripId) ?? [];
+    list.push(link);
+    linksByTripId.set(link.tripId, list);
+  }
+  const stopsByTripId = new Map<string, typeof stops>();
+  for (const stop of stops) {
+    const list = stopsByTripId.get(stop.tripId) ?? [];
+    list.push(stop);
+    stopsByTripId.set(stop.tripId, list);
+  }
+  res.json({ trips: trips.map((trip) => ({
+    ...trip,
+    eventLinks: linksByTripId.get(trip.id) ?? [],
+    stops: stopsByTripId.get(trip.id) ?? []
+  })) });
 }));
 
 tripsRouter.post("/:organizationId/trips", requireAuth, orgRoles("ORG_ADMIN", "EVENT_MANAGER"), asyncHandler(async (req, res) => {
@@ -143,6 +157,11 @@ tripsRouter.patch("/:organizationId/trips/:tripId/events", requireAuth, orgRoles
     await tx.tripEvent.deleteMany({ where: { tripId } });
     if (eventIds.length) await tx.tripEvent.createMany({ data: eventIds.map((eventId, sortOrder) => ({ tripId, eventId, sortOrder })) });
   });
-  const eventLinks = await prisma.tripEvent.findMany({ where: { tripId }, include: { event: true }, orderBy: { sortOrder: "asc" } });
+  const links = await prisma.tripEvent.findMany({ where: { tripId }, orderBy: { sortOrder: "asc" } });
+  const eventsById = new Map((await loadOrganizationEvents(organizationId, links.map(({ eventId }) => eventId))).map((event) => [event.id, event]));
+  const eventLinks = links.flatMap((link) => {
+    const event = eventsById.get(link.eventId);
+    return event ? [{ ...link, event }] : [];
+  });
   res.json({ eventLinks });
 }));
