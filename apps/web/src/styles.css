@@ -45,6 +45,14 @@ button, a, input, select, textarea { -webkit-tap-highlight-color: transparent; }
 .login-card label, .form-grid label { display: flex; flex-direction: column; gap: 8px; font-size: 12px; font-weight: 700; color: #594a43; margin: 18px 0; }
 .login-card input, .form-grid input, .form-grid select, .form-grid textarea, .trip-add select, .member-row select { border: 1px solid #e4d8cd; background: #fffefa; border-radius: 9px; padding: 12px 13px; outline: none; color: var(--ink); width: 100%; font-size: 13px; }
 .login-card input:focus, .form-grid input:focus, .form-grid select:focus, .form-grid textarea:focus, .trip-add select:focus, .member-row select:focus { border-color: #a95a4d; box-shadow: 0 0 0 3px #72000016; }
+.password-field { display: flex; flex-direction: column; gap: 8px; margin: 18px 0; }
+.form-grid .password-field { margin: 8px 0; }
+.login-card .password-field > label, .form-grid .password-field > label { margin: 0; }
+.password-input { position: relative; }
+.login-card .password-input input, .form-grid .password-input input { padding-right: 48px; min-height: 44px; }
+.password-toggle { position: absolute; top: 0; right: 0; bottom: 0; width: 44px; display: grid; place-items: center; border: 0; border-radius: 9px; background: transparent; color: var(--muted); padding: 0; }
+.password-toggle:hover { color: var(--wine); background: #72000008; }
+.password-toggle:focus-visible { outline: 2px solid var(--wine); outline-offset: -3px; }
 .primary, .secondary { min-height: 40px; border: 0; border-radius: 9px; padding: 10px 15px; display: inline-flex; justify-content: center; align-items: center; gap: 8px; font-weight: 700; font-size: 13px; text-decoration: none; transition: background .15s, transform .15s, box-shadow .15s; }
 .primary { color: white; background: var(--wine); box-shadow: 0 4px 10px #72000022; }
 .primary:hover { background: var(--wine-dark); transform: translateY(-1px); }

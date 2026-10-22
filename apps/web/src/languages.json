@@ -4,6 +4,8 @@
     "flag": "🇧🇷",
     "locale": "pt-BR",
     "translations": {
+      "Mostrar senha": "Mostrar senha",
+      "Ocultar senha": "Ocultar senha",
       "Status": "Status",
       "Filtrar por data": "Filtrar por data",
       "Ocultar filtro": "Ocultar filtro",
@@ -59,6 +61,8 @@
     "flag": "🇬🇧",
     "locale": "en-US",
     "translations": {
+      "Mostrar senha": "Show password",
+      "Ocultar senha": "Hide password",
       "Status": "Status",
       "Filtrar por data": "Filter by date",
       "Ocultar filtro": "Hide filter",
@@ -114,6 +118,8 @@
   "flag": "🇧🇬",
   "locale": "bg-BG",
   "translations": {
+      "Mostrar senha": "Покажи паролата",
+      "Ocultar senha": "Скрий паролата",
       "Status": "Състояние",
       "Filtrar por data": "Филтриране по дата",
       "Ocultar filtro": "Скриване на филтъра",
@@ -338,6 +344,8 @@
   "es": {
     "name": "Español", "flag": "🇪🇸", "locale": "es-ES",
     "translations": {
+      "Mostrar senha": "Mostrar contraseña",
+      "Ocultar senha": "Ocultar contraseña",
       "Status": "Estado",
       "Filtrar por data": "Filtrar por fecha",
       "Ocultar filtro": "Ocultar filtro",
@@ -383,6 +391,8 @@
   "it": {
     "name": "Italiano", "flag": "🇮🇹", "locale": "it-IT",
     "translations": {
+      "Mostrar senha": "Mostra password",
+      "Ocultar senha": "Nascondi password",
       "Status": "Stato",
       "Filtrar por data": "Filtra per data",
       "Ocultar filtro": "Nascondi filtro",
@@ -428,6 +438,8 @@
   "ro": {
     "name": "Română", "flag": "🇷🇴", "locale": "ro-RO",
     "translations": {
+      "Mostrar senha": "Afișează parola",
+      "Ocultar senha": "Ascunde parola",
       "Status": "Stare",
       "Filtrar por data": "Filtrează după dată",
       "Ocultar filtro": "Ascunde filtrul",
@@ -473,6 +485,8 @@
   "uk": {
     "name": "Українська", "flag": "🇺🇦", "locale": "uk-UA",
     "translations": {
+      "Mostrar senha": "Показати пароль",
+      "Ocultar senha": "Приховати пароль",
       "Status": "Статус",
       "Filtrar por data": "Фільтрувати за датою",
       "Ocultar filtro": "Приховати фільтр",
@@ -518,6 +532,8 @@
   "fr": {
     "name": "Français", "flag": "🇫🇷", "locale": "fr-FR",
     "translations": {
+      "Mostrar senha": "Afficher le mot de passe",
+      "Ocultar senha": "Masquer le mot de passe",
       "Status": "Statut",
       "Filtrar por data": "Filtrer par date",
       "Ocultar filtro": "Masquer le filtre",
@@ -563,6 +579,8 @@
   "de": {
     "name": "Deutsch", "flag": "🇩🇪", "locale": "de-DE",
     "translations": {
+      "Mostrar senha": "Passwort anzeigen",
+      "Ocultar senha": "Passwort verbergen",
       "Status": "Status",
       "Filtrar por data": "Nach Datum filtern",
       "Ocultar filtro": "Filter ausblenden",

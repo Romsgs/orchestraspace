@@ -2,6 +2,7 @@ import { cloneElement, FormEvent, isValidElement, ReactNode, useEffect, useMemo,
 import { CalendarDays, ChevronDown, Crown, FileText, Filter, LogOut, MapPinned, Music2, Pencil, Plus, RefreshCw, ShieldCheck, Trash2, Users, X } from "lucide-react";
 import { api, Document as OrgDocument, Event, instruments, Invitation, Membership, MusicianOption, Organization, Trip, User } from "./api";
 import languages from "./languages.json";
+import { PasswordField } from "./PasswordField";
 
 type Tab = "agenda" | "trips" | "team" | "documents" | "system";
 type LanguageCode = keyof typeof languages;
@@ -359,13 +360,13 @@ export function App() {
       <div className="art-note"><CalendarDays size={17}/> Planejamento musical, sem ruído.</div>
     </div>
     <section className="login-panel">
-      {invitationToken && <form className="login-card invite-card" onSubmit={acceptInvitation}><span className="eyebrow">CONVITE</span><h2>Aceitar convite</h2><p className="muted">Crie sua conta para entrar na orquestra.</p>{error && <div className="alert error">{error}</div>}<label>Seu nome<input value={acceptName} onChange={(e)=>setAcceptName(e.target.value)} required minLength={2}/></label><label>Senha nova<input type="password" value={acceptPassword} onChange={(e)=>setAcceptPassword(e.target.value)} minLength={11} required autoComplete="new-password"/></label><label>Confirme a senha<input type="password" value={confirmAcceptPassword} onChange={(e)=>setConfirmAcceptPassword(e.target.value)} minLength={11} required autoComplete="new-password"/></label><button className="primary full" disabled={acceptingInvitation}>Criar conta e aceitar</button></form>}
+      {invitationToken && <form className="login-card invite-card" onSubmit={acceptInvitation}><span className="eyebrow">CONVITE</span><h2>Aceitar convite</h2><p className="muted">Crie sua conta para entrar na orquestra.</p>{error && <div className="alert error">{error}</div>}<label>Seu nome<input value={acceptName} onChange={(e)=>setAcceptName(e.target.value)} required minLength={2}/></label><PasswordField label="Senha nova" showLabel={t("Mostrar senha")} hideLabel={t("Ocultar senha")} value={acceptPassword} onChange={(e)=>setAcceptPassword(e.target.value)} minLength={11} required autoComplete="new-password"/><PasswordField label="Confirme a senha" showLabel={t("Mostrar senha")} hideLabel={t("Ocultar senha")} value={confirmAcceptPassword} onChange={(e)=>setConfirmAcceptPassword(e.target.value)} minLength={11} required autoComplete="new-password"/><button className="primary full" disabled={acceptingInvitation}>Criar conta e aceitar</button></form>}
       <form className="login-card" onSubmit={submitLogin}>
         <span className="eyebrow">ÁREA RESTRITA</span><h2>Bem-vindo de volta</h2>
         <p className="muted">Entre com sua conta para acessar a plataforma.</p>
         {error && <div className="alert error">{error}</div>}
         <label>E-mail<input type="email" autoComplete="username" required value={loginEmail} onChange={(e)=>setLoginEmail(e.target.value)} placeholder="voce@orquestra.org"/></label>
-        <label>Senha<input type="password" autoComplete="current-password" required value={loginPassword} onChange={(e)=>setLoginPassword(e.target.value)} placeholder="Sua senha"/></label>
+        <PasswordField label="Senha" showLabel={t("Mostrar senha")} hideLabel={t("Ocultar senha")} autoComplete="current-password" required value={loginPassword} onChange={(e)=>setLoginPassword(e.target.value)} placeholder="Sua senha"/>
         <button className="primary full" disabled={busy}>{busy ? "Entrando..." : "Entrar"} <span>→</span></button>
         <p className="login-foot">Acesso criado pelo administrador da plataforma.</p>
       </form>
@@ -404,7 +405,7 @@ export function App() {
 
       {error && <div className="alert error">{error}<button onClick={()=>setError("")}>×</button></div>}
       {notice && <div className="alert success">{notice}<button onClick={()=>setNotice("")}>×</button></div>}
-      {invitationToken && <form className="panel form-grid" onSubmit={acceptInvitation}><h3>Aceitar convite para outra orquestra</h3><label>Confirme seu nome<input value={acceptName || user.name} onChange={(e)=>setAcceptName(e.target.value)} required minLength={2}/></label><label>Senha atual da conta<input type="password" value={acceptPassword} onChange={(e)=>setAcceptPassword(e.target.value)} required autoComplete="current-password"/></label><div className="form-actions"><button className="primary" disabled={acceptingInvitation}>Aceitar convite</button></div></form>}
+      {invitationToken && <form className="panel form-grid" onSubmit={acceptInvitation}><h3>Aceitar convite para outra orquestra</h3><label>Confirme seu nome<input value={acceptName || user.name} onChange={(e)=>setAcceptName(e.target.value)} required minLength={2}/></label><PasswordField label="Senha atual da conta" showLabel={t("Mostrar senha")} hideLabel={t("Ocultar senha")} value={acceptPassword} onChange={(e)=>setAcceptPassword(e.target.value)} required autoComplete="current-password"/><div className="form-actions"><button className="primary" disabled={acceptingInvitation}>Aceitar convite</button></div></form>}
 
       {tab==="system" && user.isSuperAdmin ? <section>
         <div className="welcome-row"><div><h2>O centro de comando</h2><p className="muted">Visão geral das instituições e da atividade da plataforma.</p></div><button className="primary" onClick={()=>setShowOrgForm(!showOrgForm)}><Plus size={17}/> Nova orquestra</button></div>
