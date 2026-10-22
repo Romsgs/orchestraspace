@@ -306,11 +306,12 @@ export function App() {
   async function submitInvitation(e: FormEvent<HTMLFormElement>) {
     e.preventDefault(); setError(""); setInviteToken("");
     if (!orgId) { setError(t("Selecione uma orquestra")); return; }
-    const data = new FormData(e.currentTarget);
+    const form = e.currentTarget;
+    const data = new FormData(form);
     try {
       const roleKey = String(data.get("roleKey"));
       const result = await api.createInvitation(orgId, String(data.get("email")), roleKey, roleKey === "MUSICIAN" ? String(data.get("instrument")) : undefined);
-      setInviteToken(result.token); await loadTeam(); e.currentTarget.reset(); setInviteRole("MUSICIAN");
+      setInviteToken(result.token); form.reset(); setInviteRole("MUSICIAN"); await loadTeam();
     } catch (err) { setError(err instanceof Error ? err.message : "Falha ao criar convite."); }
   }
 
